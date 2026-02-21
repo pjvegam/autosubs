@@ -1,11 +1,43 @@
 import asyncio
 import struct
-import wave
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from livesubs.capture import SystemAudioCapture
+from livesubs.capture import SystemAudioCapture, _convert_to_16k_mono
+from livesubs.vad import AudioChunk
+
+
+class TestConvertTo16kMono:
+    def test_stereo_to_mono(self):
+        # 100 samples estereo
+        stereo = struct.pack("<200h", *([1000, -1000] * 100))
+        result = _convert_to_16k_mono(stereo, channels=2, source_rate=16000)
+        # Mono: promedio de L y R = 0
+        samples = struct.unpack(f"<{len(result) // 2}h", result)
+        assert len(samples) == 100
+
+    def test_resample_integer_ratio(self):
+        # 48000Hz → 16000Hz (ratio 3)
+        num_samples = 48000
+        mono = struct.pack(f"<{num_samples}h", *([0] * num_samples))
+        result = _convert_to_16k_mono(mono, channels=1, source_rate=48000)
+        samples = struct.unpack(f"<{len(result) // 2}h", result)
+        assert len(samples) == 16000
+
+    def test_resample_non_integer_ratio(self):
+        # 44100Hz → 16000Hz (ratio no entero)
+        num_samples = 44100
+        mono = struct.pack(f"<{num_samples}h", *([0] * num_samples))
+        result = _convert_to_16k_mono(mono, channels=1, source_rate=44100)
+        # Deberia estar cerca de 16000 samples
+        samples = struct.unpack(f"<{len(result) // 2}h", result)
+        assert 15000 < len(samples) < 17000
+
+    def test_no_conversion_needed(self):
+        mono = struct.pack("<16000h", *([0] * 16000))
+        result = _convert_to_16k_mono(mono, channels=1, source_rate=16000)
+        assert result == mono
 
 
 class TestSystemAudioCapture:
@@ -14,102 +46,56 @@ class TestSystemAudioCapture:
         assert capture.segment_duration == 5
         assert not capture.is_running()
 
-    def test_write_chunk_creates_wav(self, tmp_path):
+    async def test_start_sets_running(self, tmp_path):
+        capture = SystemAudioCapture(tmp_path / "audio", segment_duration=5)
+
+        with patch.object(capture, "_capture_loop"):
+            capture._running = True
+            capture.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Verificar que start crea el directorio
+        await capture.start()
+        assert capture.output_dir.exists()
+        assert capture.is_running()
+        # Cleanup
+        capture._stop_event.set()
+        capture._running = False
+
+    async def test_poll_chunks_drains_queue(self, tmp_path):
         capture = SystemAudioCapture(tmp_path, segment_duration=5)
-        capture.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generar 1 segundo de silencio a 48kHz estereo (16-bit)
-        num_samples = 48000
-        stereo_data = struct.pack(f"<{num_samples * 2}h", *([0] * num_samples * 2))
+        chunk1 = AudioChunk(path=tmp_path / "chunk_0000.wav", duration=4.2)
+        chunk2 = AudioChunk(path=tmp_path / "chunk_0001.wav", duration=5.1)
 
-        capture._write_chunk(stereo_data, channels=2, source_rate=48000, target_rate=16000)
+        # Simular que la queue del thread tiene chunks
+        capture._chunk_queue.put(chunk1)
+        capture._chunk_queue.put(chunk2)
+        capture._chunk_queue.put(None)
 
-        chunk_path = tmp_path / "chunk_0000.wav"
-        assert chunk_path.exists()
-
-        with wave.open(str(chunk_path), "rb") as wf:
-            assert wf.getnchannels() == 1
-            assert wf.getframerate() == 16000
-            assert wf.getsampwidth() == 2
-
-    def test_write_chunk_increments_index(self, tmp_path):
-        capture = SystemAudioCapture(tmp_path, segment_duration=5)
-        capture.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Mono a 16kHz, sin conversion necesaria
-        mono_data = struct.pack("<16000h", *([0] * 16000))
-
-        capture._write_chunk(mono_data, channels=1, source_rate=16000, target_rate=16000)
-        assert capture._chunk_index == 1
-
-        capture._write_chunk(mono_data, channels=1, source_rate=16000, target_rate=16000)
-        assert capture._chunk_index == 2
-
-        assert (tmp_path / "chunk_0000.wav").exists()
-        assert (tmp_path / "chunk_0001.wav").exists()
-
-    def test_write_chunk_resamples_non_integer_ratio(self, tmp_path):
-        capture = SystemAudioCapture(tmp_path, segment_duration=5)
-        capture.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # 44100Hz mono -> 16000Hz (ratio no entero)
-        num_samples = 44100
-        mono_data = struct.pack(f"<{num_samples}h", *([0] * num_samples))
-
-        capture._write_chunk(mono_data, channels=1, source_rate=44100, target_rate=16000)
-
-        chunk_path = tmp_path / "chunk_0000.wav"
-        assert chunk_path.exists()
-        with wave.open(str(chunk_path), "rb") as wf:
-            assert wf.getframerate() == 16000
-
-    async def test_poll_chunks_detects_files(self, tmp_path):
-        capture = SystemAudioCapture(tmp_path, segment_duration=5)
-        capture._running = True
-
-        # Crear 2 chunks y luego parar
-        mono_data = struct.pack("<16000h", *([0] * 16000))
-        for i in range(2):
-            path = tmp_path / f"chunk_{i:04d}.wav"
-            with wave.open(str(path), "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(16000)
-                wf.writeframes(mono_data)
-
-        # Simular que la captura se detiene despues de crear los chunks
-        async def _stop_after_delay():
-            await asyncio.sleep(0.5)
-            capture._running = False
-
-        queue: asyncio.Queue = asyncio.Queue()
-        stop_task = asyncio.create_task(_stop_after_delay())
-        await capture.poll_chunks(queue)
-        await stop_task
+        async_queue: asyncio.Queue = asyncio.Queue()
+        await capture.poll_chunks(async_queue)
 
         items = []
-        while not queue.empty():
-            items.append(await queue.get())
+        while not async_queue.empty():
+            items.append(await async_queue.get())
 
-        # chunk_0000.wav, chunk_0001.wav (ultimo), None (sentinel)
         assert len(items) == 3
-        assert items[0] == tmp_path / "chunk_0000.wav"
-        assert items[1] == tmp_path / "chunk_0001.wav"
+        assert items[0] is chunk1
+        assert items[1] is chunk2
         assert items[2] is None
 
-    async def test_poll_chunks_sends_sentinel_when_stopped(self, tmp_path):
+    async def test_poll_chunks_sends_sentinel_when_empty(self, tmp_path):
         capture = SystemAudioCapture(tmp_path, segment_duration=5)
-        capture._running = False  # Ya detenido
+        capture._chunk_queue.put(None)
 
-        queue: asyncio.Queue = asyncio.Queue()
-        await capture.poll_chunks(queue)
+        async_queue: asyncio.Queue = asyncio.Queue()
+        await capture.poll_chunks(async_queue)
 
-        sentinel = await queue.get()
+        sentinel = await async_queue.get()
         assert sentinel is None
 
     async def test_stop_sets_event(self, tmp_path):
         capture = SystemAudioCapture(tmp_path, segment_duration=5)
-        # Sin thread activo, solo verifica que no crashea
         await capture.stop()
         assert capture._stop_event.is_set()
         assert not capture.is_running()

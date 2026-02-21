@@ -15,6 +15,8 @@ class Config:
     gpt_model: str = ""
     subs_only: bool = False
     system_audio: bool = False
+    diarize: bool = False
+    vad_aggressiveness: int = 0
     verbose: bool = False
     api_key: str = field(default="", repr=False)
 
@@ -34,6 +36,12 @@ class Config:
             )
         if not self.gpt_model:
             self.gpt_model = os.environ.get("LIVESUBS_GPT_MODEL", "gpt-4o-mini")
+        if not self.diarize:
+            self.diarize = os.environ.get("LIVESUBS_DIARIZE", "").lower() in ("1", "true")
+        if not self.vad_aggressiveness:
+            self.vad_aggressiveness = int(
+                os.environ.get("LIVESUBS_VAD_AGGRESSIVENESS", "2"),
+            )
         if not self.api_key:
             self.api_key = os.environ.get("OPENAI_API_KEY", "")
         if not self.api_key:
@@ -46,6 +54,14 @@ class Config:
                 "Se requiere una URL de YouTube, "
                 "o usa --system-audio para capturar audio del sistema"
             )
+
+    @property
+    def vad_min_duration(self) -> float:
+        return self.segment_duration * 0.6
+
+    @property
+    def vad_max_duration(self) -> float:
+        return self.segment_duration * 1.6
 
     @property
     def ipc_pipe(self) -> str:

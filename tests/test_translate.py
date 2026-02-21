@@ -1,6 +1,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from livesubs.translate import SYSTEM_PROMPT, translate_text
+from livesubs.translate import (
+    _ROLE,
+    _RULES,
+    SYSTEM_PROMPT,
+    _build_system_prompt,
+    translate_text,
+)
 
 
 def _mock_completion(content: str) -> MagicMock:
@@ -62,3 +68,38 @@ class TestTranslateText:
         with patch("livesubs.retry.BASE_DELAY", 0.01):
             result = await translate_text(client, "テスト", "ja", "es")
         assert result is None
+
+    async def test_context_appears_in_system_prompt(self):
+        client = AsyncMock()
+        client.chat.completions.create.return_value = _mock_completion("Hello")
+
+        await translate_text(
+            client, "Hola", "es", "en", context="Canal: TestChannel\nTitulo: Test Stream",
+        )
+
+        call_kwargs = client.chat.completions.create.call_args.kwargs
+        system_content = call_kwargs["messages"][0]["content"]
+        assert "Canal: TestChannel" in system_content
+        assert "Titulo: Test Stream" in system_content
+        assert system_content.startswith(_ROLE)
+        assert system_content.endswith(_RULES)
+
+    async def test_no_context_uses_default_prompt(self):
+        client = AsyncMock()
+        client.chat.completions.create.return_value = _mock_completion("Hello")
+
+        await translate_text(client, "Hola", "es", "en")
+
+        call_kwargs = client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["messages"][0]["content"] == SYSTEM_PROMPT
+
+
+class TestBuildSystemPrompt:
+    def test_empty_context_returns_default(self):
+        assert _build_system_prompt("") == SYSTEM_PROMPT
+
+    def test_context_inserted_between_role_and_rules(self):
+        result = _build_system_prompt("Canal: Test")
+        assert result.startswith(_ROLE)
+        assert result.endswith(_RULES)
+        assert "Canal: Test" in result

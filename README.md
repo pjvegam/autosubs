@@ -72,4 +72,5 @@ Todo se puede configurar en `.env` o con flags (los flags tienen prioridad):
 | `LIVESUBS_GPT_MODEL` | `--gpt-model` | `gpt-4o-mini` | Modelo de traduccion |
 | - | `--subs-only` | - | Solo subtitulos en ventana overlay (sin MPV) |
 | - | `--system-audio` | - | Captura audio del sistema (loopback WASAPI, solo Windows) |
+| - | `--diarize` | - | Activar diarizacion de speakers (requiere `livesubs[diarize]`) |
 | - | `--verbose` | - | Muestra logs de debug |

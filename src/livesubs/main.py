@@ -44,6 +44,14 @@ def parse_args() -> argparse.Namespace:
         help="Capturar audio del sistema (loopback WASAPI) en vez de YouTube",
     )
     parser.add_argument(
+        "--diarize", action="store_true",
+        help="Activar diarizacion de speakers (requiere pip install livesubs[diarize])",
+    )
+    parser.add_argument(
+        "--vad-aggressiveness", type=int, default=0,
+        help="Agresividad del VAD 0-3 (default: 2)",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Activar logging de debug",
     )
@@ -78,6 +86,8 @@ def main() -> None:
             gpt_model=args.gpt_model,
             subs_only=args.subs_only,
             system_audio=args.system_audio,
+            diarize=args.diarize,
+            vad_aggressiveness=args.vad_aggressiveness,
             verbose=args.verbose,
         )
     except ValueError as e:

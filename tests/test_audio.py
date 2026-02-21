@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from livesubs.audio import AudioSegmenter
+from livesubs.vad import AudioChunk
 
 
 class TestAudioSegmenter:
@@ -30,13 +31,12 @@ class TestAudioSegmenter:
         assert audio_dir.exists()
         assert seg.process is mock_proc
 
-        # Verificar que ffmpeg se llamo con los argumentos correctos
+        # Verificar que ffmpeg se llamo con output PCM a stdout
         call_args = mock_exec.call_args[0]
         assert call_args[0] == "ffmpeg"
         assert "-f" in call_args
-        assert "segment" in call_args
-        assert "-segment_time" in call_args
-        assert "10" in call_args
+        assert "s16le" in call_args
+        assert "pipe:1" in call_args
         assert "-ar" in call_args
         assert "16000" in call_args
 
@@ -50,55 +50,75 @@ class TestAudioSegmenter:
 
         mock_ffmpeg = MagicMock(spec=subprocess.Popen)
         mock_ffmpeg.poll.return_value = None
+        mock_ffmpeg.stdout = MagicMock()
 
         with patch(
             "livesubs.audio.asyncio.to_thread",
             new_callable=AsyncMock,
             return_value=(mock_ytdlp, mock_ffmpeg),
-        ):
+        ), patch("livesubs.audio.threading.Thread") as mock_thread:
+            mock_thread.return_value = MagicMock()
             await seg.start_live("https://youtube.com/watch?v=test")
 
         assert audio_dir.exists()
         assert seg._ytdlp_popen is mock_ytdlp
         assert seg._ffmpeg_popen is mock_ffmpeg
+        assert seg._chunk_queue is not None
 
-    async def test_poll_chunks_detects_completed_chunks(self, tmp_path):
+    async def test_poll_chunks_vod_reads_from_process(self, tmp_path):
+        """poll_chunks en modo VOD lee de process.stdout y usa VAD."""
         audio_dir = tmp_path / "audio"
-        audio_dir.mkdir()
+        audio_dir.mkdir(parents=True)
 
-        seg = AudioSegmenter("https://audio.url", audio_dir, 10)
-        # Simular que ffmpeg ya no esta corriendo
+        seg = AudioSegmenter("https://audio.url", audio_dir, 5)
         seg.process = AsyncMock()
-        seg.process.returncode = 0  # ya termino
+        seg.process.returncode = 0
 
-        # Crear dos chunks
-        (audio_dir / "chunk_0000.wav").write_bytes(b"audio0")
-        (audio_dir / "chunk_0001.wav").write_bytes(b"audio1")
+        mock_chunk = AudioChunk(path=audio_dir / "chunk_0000.wav", duration=4.5)
 
-        queue: asyncio.Queue = asyncio.Queue()
-        await seg.poll_chunks(queue)
+        # Simular que stdout retorna datos y luego EOF
+        pcm_data = b"\x00" * 32000  # 1s de audio
+        seg.process.stdout = AsyncMock()
+        seg.process.stdout.read = AsyncMock(side_effect=[pcm_data, b""])
+        seg.process.stderr = AsyncMock()
+        seg.process.stderr.read = AsyncMock(return_value=b"")
 
-        chunks = []
+        with patch("livesubs.audio.AudioSegmenter._make_vad_segmenter") as mock_vad:
+            mock_segmenter = MagicMock()
+            mock_segmenter.feed.return_value = [mock_chunk]
+            mock_segmenter.flush_remaining.return_value = None
+            mock_vad.return_value = mock_segmenter
+
+            queue: asyncio.Queue = asyncio.Queue()
+            await seg.poll_chunks(queue)
+
+        items = []
         while not queue.empty():
-            item = await queue.get()
-            chunks.append(item)
+            items.append(await queue.get())
 
-        # Deberia tener chunk_0000, chunk_0001, y None sentinel
-        assert len(chunks) == 3
-        assert chunks[0].name == "chunk_0000.wav"
-        assert chunks[1].name == "chunk_0001.wav"
-        assert chunks[2] is None
+        assert len(items) == 2
+        assert items[0] is mock_chunk
+        assert items[1] is None
 
-    async def test_poll_chunks_sends_sentinel_when_no_chunks(self, tmp_path):
+    async def test_poll_chunks_sends_sentinel_when_no_data(self, tmp_path):
         audio_dir = tmp_path / "audio"
-        audio_dir.mkdir()
+        audio_dir.mkdir(parents=True)
 
         seg = AudioSegmenter("https://audio.url", audio_dir, 10)
         seg.process = AsyncMock()
-        seg.process.returncode = 0  # ffmpeg already finished, no chunks
+        seg.process.returncode = 0
+        seg.process.stdout = AsyncMock()
+        seg.process.stdout.read = AsyncMock(return_value=b"")
+        seg.process.stderr = AsyncMock()
+        seg.process.stderr.read = AsyncMock(return_value=b"")
 
-        queue: asyncio.Queue = asyncio.Queue()
-        await seg.poll_chunks(queue)
+        with patch("livesubs.audio.AudioSegmenter._make_vad_segmenter") as mock_vad:
+            mock_segmenter = MagicMock()
+            mock_segmenter.flush_remaining.return_value = None
+            mock_vad.return_value = mock_segmenter
+
+            queue: asyncio.Queue = asyncio.Queue()
+            await seg.poll_chunks(queue)
 
         item = await queue.get()
         assert item is None
@@ -155,3 +175,42 @@ class TestAudioSegmenter:
 
         mock_ffmpeg.terminate.assert_called_once()
         mock_ytdlp.terminate.assert_called_once()
+
+    async def test_pcm_callback_invoked_vod(self, tmp_path):
+        """pcm_callback se invoca con cada bloque de PCM leido en modo VOD."""
+        audio_dir = tmp_path / "audio"
+        audio_dir.mkdir(parents=True)
+
+        received: list[bytes] = []
+
+        def callback(data: bytes) -> None:
+            received.append(data)
+
+        seg = AudioSegmenter(
+            "https://audio.url", audio_dir, 5,
+            pcm_callback=callback,
+        )
+        seg.process = AsyncMock()
+        seg.process.returncode = 0
+
+        pcm_data = b"\x00" * 32000
+        seg.process.stdout = AsyncMock()
+        seg.process.stdout.read = AsyncMock(side_effect=[pcm_data, b""])
+        seg.process.stderr = AsyncMock()
+        seg.process.stderr.read = AsyncMock(return_value=b"")
+
+        with patch("livesubs.audio.AudioSegmenter._make_vad_segmenter") as mock_vad:
+            mock_segmenter = MagicMock()
+            mock_segmenter.feed.return_value = []
+            mock_segmenter.flush_remaining.return_value = None
+            mock_vad.return_value = mock_segmenter
+
+            queue: asyncio.Queue = asyncio.Queue()
+            await seg.poll_chunks(queue)
+
+        assert len(received) == 1
+        assert received[0] == pcm_data
+
+    def test_pcm_callback_none_by_default(self, tmp_path):
+        seg = AudioSegmenter("https://audio.url", tmp_path, 5)
+        assert seg._pcm_callback is None

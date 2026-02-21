@@ -6,8 +6,9 @@ from livesubs.retry import with_retries
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = (
-    "Eres un traductor de subtitulos en tiempo real. "
+_ROLE = "Eres un traductor de subtitulos en tiempo real. "
+
+_RULES = (
     "Reglas estrictas:\n"
     "- Responde UNICAMENTE con la traduccion, nada mas.\n"
     "- NUNCA incluyas el texto original en tu respuesta.\n"
@@ -16,6 +17,15 @@ SYSTEM_PROMPT = (
     "- Si no puedes traducir, responde con una traduccion aproximada."
 )
 
+SYSTEM_PROMPT = _ROLE + _RULES
+
+
+def _build_system_prompt(context: str) -> str:
+    """Construye el system prompt, insertando contexto si existe."""
+    if not context:
+        return SYSTEM_PROMPT
+    return f"{_ROLE}\n{context}\n{_RULES}"
+
 
 async def translate_text(
     client: AsyncOpenAI,
@@ -23,11 +33,13 @@ async def translate_text(
     source_lang: str,
     target_lang: str,
     model: str = "gpt-4o-mini",
+    context: str = "",
 ) -> str | None:
     """Traduce texto usando la API de GPT.
 
     Retorna el texto traducido o None si falla despues de reintentos.
     """
+    system_prompt = _build_system_prompt(context)
     user_msg = f"Traduce del {source_lang} al {target_lang}:\n{text}"
 
     async def _call() -> str:
@@ -35,7 +47,7 @@ async def translate_text(
             model=model,
             temperature=0.3,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg},
             ],
         )
