@@ -58,6 +58,24 @@ uv run livesubs --system-audio
 uv run livesubs --system-audio --source-lang en --target-lang es
 ```
 
+## Diarizacion (experimental)
+
+Identifica quien habla y etiqueta los subtitulos por speaker. Requiere GPU NVIDIA y Python 3.12 (NeMo no soporta 3.13 aun):
+
+```bash
+# Instalar dependencias de diarizacion
+uv sync --python 3.12 --extra diarize
+
+# Usar con cualquier modo
+uv run --python 3.12 --extra diarize livesubs "https://www.youtube.com/watch?v=..." --diarize
+
+# Con overlay
+uv run --python 3.12 --extra diarize livesubs "https://www.youtube.com/watch?v=..." --subs-only --diarize
+
+# Con audio del sistema
+uv run --python 3.12 --extra diarize livesubs --system-audio --diarize
+```
+
 ## Opciones
 
 Todo se puede configurar en `.env` o con flags (los flags tienen prioridad):
