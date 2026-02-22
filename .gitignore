@@ -16,3 +16,6 @@ wheels/
 *.wav
 *.srt
 *.zip
+
+# Session logs
+livesubs_logs/
