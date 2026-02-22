@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
 
 from livesubs.retry import with_retries
+
+if TYPE_CHECKING:
+    from livesubs.costs import CostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +38,9 @@ async def translate_text(
     text: str,
     source_lang: str,
     target_lang: str,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-4.1",
     context: str = "",
+    tracker: CostTracker | None = None,
 ) -> str | None:
     """Traduce texto usando la API de GPT.
 
@@ -51,6 +58,11 @@ async def translate_text(
                 {"role": "user", "content": user_msg},
             ],
         )
+        if tracker and response.usage:
+            tracker.add_translation(
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+            )
         return response.choices[0].message.content.strip()
 
     translated = await with_retries(_call, "Traduccion")

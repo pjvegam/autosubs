@@ -14,6 +14,7 @@ from openai import AsyncOpenAI
 from livesubs.audio import AudioSegmenter
 from livesubs.capture import SystemAudioCapture
 from livesubs.config import Config
+from livesubs.costs import CostTracker
 from livesubs.overlay import SubtitleOverlay, run_overlay_loop
 from livesubs.player import MPVPlayer
 from livesubs.stream import get_audio_url, get_stream_info, get_stream_urls
@@ -27,11 +28,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+LOGS_DIR = Path("livesubs_logs")
 MIN_SPEECH_RATIO = 0.15
 
 
 async def _get_stream_context(
     url: str, client: AsyncOpenAI, config: Config,
+    tracker: CostTracker | None = None,
 ) -> tuple[bool, str]:
     """Extrae is_live y contexto de metadata en una sola llamada a yt-dlp.
 
@@ -46,7 +49,7 @@ async def _get_stream_context(
         if title:
             translated_title = await translate_text(
                 client, title, config.source_lang, config.target_lang,
-                config.gpt_model,
+                config.gpt_model, tracker=tracker,
             )
             if translated_title:
                 title = f"{title} ({translated_title})"
@@ -75,6 +78,7 @@ async def _transcribe_worker(
     config: Config,
     audio_queue: asyncio.Queue,
     text_queue: asyncio.Queue,
+    tracker: CostTracker | None = None,
 ) -> None:
     """Lee chunks de audio, los transcribe secuencialmente (para lives)."""
     elapsed = 0.0
@@ -104,6 +108,8 @@ async def _transcribe_worker(
             chunk.path.unlink()
 
         if text:
+            if tracker:
+                tracker.add_whisper(chunk.duration)
             await text_queue.put((start_time, chunk.duration, text))
 
 
@@ -113,6 +119,7 @@ async def _transcribe_worker_parallel(
     audio_queue: asyncio.Queue,
     text_queue: asyncio.Queue,
     max_concurrent: int = 3,
+    tracker: CostTracker | None = None,
 ) -> None:
     """Transcribe multiples chunks en paralelo, mantiene orden (para VODs)."""
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -157,6 +164,8 @@ async def _transcribe_worker_parallel(
         if task is not None:
             text = await task
             if text:
+                if tracker:
+                    tracker.add_whisper(duration)
                 await text_queue.put((elapsed, duration, text))
         elapsed += duration
 
@@ -171,6 +180,7 @@ async def _translate_worker(
     translated_queue: asyncio.Queue,
     stream_context: str = "",
     diarizer: DiarizationEngine | None = None,
+    tracker: CostTracker | None = None,
 ) -> None:
     """Lee texto transcrito, lo traduce y pone en la queue."""
     history: collections.deque[str] = collections.deque(maxlen=3)
@@ -204,13 +214,15 @@ async def _translate_worker(
         try:
             translated = await translate_text(
                 client, text, config.source_lang, config.target_lang,
-                config.gpt_model, context=context,
+                config.gpt_model, context=context, tracker=tracker,
             )
         except Exception as e:
             logger.error("Error inesperado traduciendo: %s", e)
             translated = None
 
         if translated:
+            if tracker:
+                tracker.add_entry(start_time, duration, text, translated)
             if speaker_tag:
                 translated = f"{speaker_tag} {translated}"
             history.append(translated)
@@ -335,7 +347,13 @@ async def run_pipeline(config: Config) -> None:
         return
 
     client = AsyncOpenAI(api_key=config.api_key)
-    live, stream_context = await _get_stream_context(config.url, client, config)
+    tracker = CostTracker(
+        whisper_model=config.whisper_model,
+        translation_model=config.gpt_model,
+        source_lang=config.source_lang,
+        target_lang=config.target_lang,
+    )
+    live, stream_context = await _get_stream_context(config.url, client, config, tracker)
     logger.info("Modo: %s", "LIVE" if live else "VOD")
     if stream_context:
         logger.info("Contexto del stream: %s", stream_context.replace("\n", " | "))
@@ -344,12 +362,15 @@ async def run_pipeline(config: Config) -> None:
     use_overlay = config.subs_only
 
     if use_overlay:
-        await _run_overlay_pipeline(config, live, stream_context)
+        await _run_overlay_pipeline(config, live, stream_context, tracker)
     else:
-        await _run_mpv_pipeline(config, live, stream_context)
+        await _run_mpv_pipeline(config, live, stream_context, tracker)
 
 
-async def _run_overlay_pipeline(config: Config, live: bool, stream_context: str = "") -> None:
+async def _run_overlay_pipeline(
+    config: Config, live: bool, stream_context: str = "",
+    tracker: CostTracker | None = None,
+) -> None:
     """Pipeline con overlay: solo audio + subtitulos en ventana transparente."""
     logger.info("Modo overlay: solo subtitulos")
 
@@ -403,13 +424,14 @@ async def _run_overlay_pipeline(config: Config, live: bool, stream_context: str 
             tg.create_task(run_overlay_loop(overlay))
             tg.create_task(segmenter.poll_chunks(audio_queue))
             tg.create_task(
-                transcriber(client, config, audio_queue, text_queue)
+                transcriber(client, config, audio_queue, text_queue, tracker=tracker)
             )
             tg.create_task(
                 _translate_worker(
                     client, config, text_queue, translated_queue,
                     stream_context=stream_context,
                     diarizer=diarizer,
+                    tracker=tracker,
                 )
             )
             tg.create_task(
@@ -431,10 +453,16 @@ async def _run_overlay_pipeline(config: Config, live: bool, stream_context: str 
         overlay.close()
         shutil.rmtree(tmp_dir, ignore_errors=True)
         logger.debug("Directorio temporal limpiado: %s", tmp_dir)
+        if tracker:
+            logger.info("\n%s", tracker.summary())
+            tracker.save_markdown(LOGS_DIR)
         logger.info("livesubs finalizado")
 
 
-async def _run_mpv_pipeline(config: Config, live: bool, stream_context: str = "") -> None:
+async def _run_mpv_pipeline(
+    config: Config, live: bool, stream_context: str = "",
+    tracker: CostTracker | None = None,
+) -> None:
     """Pipeline con MPV: video + subtitulos SRT (modo VOD)."""
     logger.info("Obteniendo URLs del stream...")
     video_url, mpv_audio_url, ffmpeg_audio_url = await get_stream_urls(config.url)
@@ -479,13 +507,14 @@ async def _run_mpv_pipeline(config: Config, live: bool, stream_context: str = ""
         async with asyncio.TaskGroup() as tg:
             tg.create_task(segmenter.poll_chunks(audio_queue))
             tg.create_task(
-                transcriber(client, config, audio_queue, text_queue)
+                transcriber(client, config, audio_queue, text_queue, tracker=tracker)
             )
             tg.create_task(
                 _translate_worker(
                     client, config, text_queue, translated_queue,
                     stream_context=stream_context,
                     diarizer=diarizer,
+                    tracker=tracker,
                 )
             )
             tg.create_task(
@@ -509,6 +538,9 @@ async def _run_mpv_pipeline(config: Config, live: bool, stream_context: str = ""
         await player.close()
         shutil.rmtree(tmp_dir, ignore_errors=True)
         logger.debug("Directorio temporal limpiado: %s", tmp_dir)
+        if tracker:
+            logger.info("\n%s", tracker.summary())
+            tracker.save_markdown(LOGS_DIR)
         logger.info("livesubs finalizado")
 
 
@@ -520,6 +552,12 @@ async def _run_system_audio_pipeline(config: Config) -> None:
     audio_dir = tmp_dir / "audio"
 
     client = AsyncOpenAI(api_key=config.api_key)
+    tracker = CostTracker(
+        whisper_model=config.whisper_model,
+        translation_model=config.gpt_model,
+        source_lang=config.source_lang,
+        target_lang=config.target_lang,
+    )
     overlay = SubtitleOverlay()
     diarizer: DiarizationEngine | None = None
 
@@ -549,12 +587,13 @@ async def _run_system_audio_pipeline(config: Config) -> None:
             tg.create_task(run_overlay_loop(overlay))
             tg.create_task(capture.poll_chunks(audio_queue))
             tg.create_task(
-                _transcribe_worker(client, config, audio_queue, text_queue)
+                _transcribe_worker(client, config, audio_queue, text_queue, tracker=tracker)
             )
             tg.create_task(
                 _translate_worker(
                     client, config, text_queue, translated_queue,
                     diarizer=diarizer,
+                    tracker=tracker,
                 )
             )
             tg.create_task(
@@ -576,4 +615,6 @@ async def _run_system_audio_pipeline(config: Config) -> None:
         overlay.close()
         shutil.rmtree(tmp_dir, ignore_errors=True)
         logger.debug("Directorio temporal limpiado: %s", tmp_dir)
+        logger.info("\n%s", tracker.summary())
+        tracker.save_markdown(LOGS_DIR)
         logger.info("livesubs finalizado")

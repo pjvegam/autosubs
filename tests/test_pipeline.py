@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from livesubs.config import Config
+from livesubs.costs import CostTracker
 from livesubs.pipeline import (
     _get_stream_context,
     _monitor_mpv,
@@ -114,6 +115,48 @@ class TestTranscribeWorker:
         assert items[2][0] == pytest.approx(10.0)
         assert items[2][1] == 3.1
         assert items[3] is None
+
+
+    async def test_tracker_records_whisper_duration(self):
+        config = _make_config()
+        client = AsyncMock()
+        tracker = CostTracker(whisper_model="gpt-4o-transcribe")
+
+        audio_queue: asyncio.Queue = asyncio.Queue()
+        text_queue: asyncio.Queue = asyncio.Queue()
+
+        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+            mock_transcribe.return_value = "texto"
+            with patch.object(Path, "unlink"):
+                await audio_queue.put(_make_chunk(duration=4.2))
+                await audio_queue.put(_make_chunk(duration=5.8))
+                await audio_queue.put(None)
+
+                await _transcribe_worker(
+                    client, config, audio_queue, text_queue, tracker=tracker,
+                )
+
+        assert tracker.whisper_seconds == pytest.approx(10.0)
+
+    async def test_tracker_not_updated_on_failed_transcription(self):
+        config = _make_config()
+        client = AsyncMock()
+        tracker = CostTracker(whisper_model="gpt-4o-transcribe")
+
+        audio_queue: asyncio.Queue = asyncio.Queue()
+        text_queue: asyncio.Queue = asyncio.Queue()
+
+        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+            mock_transcribe.return_value = None
+            with patch.object(Path, "unlink"):
+                await audio_queue.put(_make_chunk(duration=5.0))
+                await audio_queue.put(None)
+
+                await _transcribe_worker(
+                    client, config, audio_queue, text_queue, tracker=tracker,
+                )
+
+        assert tracker.whisper_seconds == 0.0
 
 
 class TestTranslateWorker:
@@ -307,6 +350,77 @@ class TestTranslateWorker:
         assert item[2] == "traducido"
         assert "[Speaker" not in item[2]
 
+    async def test_tracker_passed_to_translate_text(self):
+        config = _make_config()
+        client = AsyncMock()
+        tracker = CostTracker(translation_model="gpt-4.1")
+
+        text_queue: asyncio.Queue = asyncio.Queue()
+        translated_queue: asyncio.Queue = asyncio.Queue()
+
+        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+            mock_translate.return_value = "traducido"
+            await text_queue.put((0, 4.5, "original"))
+            await text_queue.put(None)
+
+            await _translate_worker(
+                client, config, text_queue, translated_queue, tracker=tracker,
+            )
+
+        call_kwargs = mock_translate.call_args.kwargs
+        assert call_kwargs["tracker"] is tracker
+
+    async def test_tracker_records_entries(self):
+        config = _make_config()
+        client = AsyncMock()
+        tracker = CostTracker(translation_model="gpt-4.1")
+
+        text_queue: asyncio.Queue = asyncio.Queue()
+        translated_queue: asyncio.Queue = asyncio.Queue()
+
+        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+            mock_translate.side_effect = ["traducido_1", "traducido_2"]
+            await text_queue.put((0, 4.5, "original_1"))
+            await text_queue.put((4.5, 5.0, "original_2"))
+            await text_queue.put(None)
+
+            await _translate_worker(
+                client, config, text_queue, translated_queue, tracker=tracker,
+            )
+
+        assert len(tracker.entries) == 2
+        assert tracker.entries[0].transcription == "original_1"
+        assert tracker.entries[0].translation == "traducido_1"
+        assert tracker.entries[1].transcription == "original_2"
+        assert tracker.entries[1].translation == "traducido_2"
+
+    async def test_tracker_entry_uses_clean_translation_without_speaker_tag(self):
+        config = _make_config()
+        client = AsyncMock()
+        tracker = CostTracker(translation_model="gpt-4.1")
+
+        diarizer = MagicMock()
+        diarizer.get_speaker.return_value = 0
+
+        text_queue: asyncio.Queue = asyncio.Queue()
+        translated_queue: asyncio.Queue = asyncio.Queue()
+
+        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+            mock_translate.return_value = "traducido"
+            await text_queue.put((0, 4.5, "original"))
+            await text_queue.put(None)
+
+            await _translate_worker(
+                client, config, text_queue, translated_queue,
+                diarizer=diarizer, tracker=tracker,
+            )
+
+        # Entry guarda traduccion limpia, sin speaker tag
+        assert tracker.entries[0].translation == "traducido"
+        # Pero la queue tiene el tag
+        item = await translated_queue.get()
+        assert item[2] == "[Speaker 1] traducido"
+
 
 class TestGetStreamContext:
     def _make_client_config(self):
@@ -373,7 +487,8 @@ class TestGetStreamContext:
             _, context = await _get_stream_context("https://example.com", client, config)
 
         mock_translate.assert_called_once_with(
-            client, "配信テスト", config.source_lang, config.target_lang, config.gpt_model,
+            client, "配信テスト", config.source_lang, config.target_lang,
+            config.gpt_model, tracker=None,
         )
         assert "配信テスト (Stream Test)" in context
 
@@ -661,6 +776,30 @@ class TestTranscribeWorkerParallel:
 
         sentinel = await text_queue.get()
         assert sentinel is None
+
+    async def test_tracker_records_whisper_duration(self):
+        config = _make_config()
+        client = AsyncMock()
+        tracker = CostTracker(whisper_model="gpt-4o-transcribe")
+
+        audio_queue: asyncio.Queue = asyncio.Queue()
+        text_queue: asyncio.Queue = asyncio.Queue()
+
+        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+            mock_transcribe.side_effect = ["texto_0", None, "texto_2"]
+            with patch.object(Path, "unlink"):
+                await audio_queue.put(_make_chunk(duration=4.0))
+                await audio_queue.put(_make_chunk(duration=5.0))
+                await audio_queue.put(_make_chunk(duration=3.0))
+                await audio_queue.put(None)
+
+                await _transcribe_worker_parallel(
+                    client, config, audio_queue, text_queue,
+                    max_concurrent=2, tracker=tracker,
+                )
+
+        # Solo chunks exitosos (0 y 2) deben registrarse
+        assert tracker.whisper_seconds == pytest.approx(7.0)
 
 
 class TestMonitorMPV:

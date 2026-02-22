@@ -35,7 +35,7 @@ class Config:
                 "LIVESUBS_WHISPER_MODEL", "gpt-4o-transcribe",
             )
         if not self.gpt_model:
-            self.gpt_model = os.environ.get("LIVESUBS_GPT_MODEL", "gpt-4o-mini")
+            self.gpt_model = os.environ.get("LIVESUBS_GPT_MODEL", "gpt-4.1")
         if not self.diarize:
             self.diarize = os.environ.get("LIVESUBS_DIARIZE", "").lower() in ("1", "true")
         if not self.vad_aggressiveness:

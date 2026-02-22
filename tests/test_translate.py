@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from livesubs.costs import CostTracker
 from livesubs.translate import (
     _ROLE,
     _RULES,
@@ -9,12 +10,20 @@ from livesubs.translate import (
 )
 
 
-def _mock_completion(content: str) -> MagicMock:
+def _mock_completion(
+    content: str,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> MagicMock:
     """Crea un mock de ChatCompletion response."""
     choice = MagicMock()
     choice.message.content = content
+    usage = MagicMock()
+    usage.prompt_tokens = prompt_tokens
+    usage.completion_tokens = completion_tokens
     response = MagicMock()
     response.choices = [choice]
+    response.usage = usage
     return response
 
 
@@ -92,6 +101,42 @@ class TestTranslateText:
 
         call_kwargs = client.chat.completions.create.call_args.kwargs
         assert call_kwargs["messages"][0]["content"] == SYSTEM_PROMPT
+
+
+    async def test_tracker_records_usage(self):
+        client = AsyncMock()
+        client.chat.completions.create.return_value = _mock_completion(
+            "Hola", prompt_tokens=120, completion_tokens=30,
+        )
+        tracker = CostTracker(translation_model="gpt-4o-mini")
+
+        await translate_text(client, "Hello", "en", "es", tracker=tracker)
+
+        assert tracker.translation_prompt_tokens == 120
+        assert tracker.translation_completion_tokens == 30
+
+    async def test_tracker_accumulates_across_calls(self):
+        client = AsyncMock()
+        client.chat.completions.create.side_effect = [
+            _mock_completion("Hola", prompt_tokens=100, completion_tokens=20),
+            _mock_completion("Mundo", prompt_tokens=110, completion_tokens=25),
+        ]
+        tracker = CostTracker(translation_model="gpt-4o-mini")
+
+        await translate_text(client, "Hello", "en", "es", tracker=tracker)
+        await translate_text(client, "World", "en", "es", tracker=tracker)
+
+        assert tracker.translation_prompt_tokens == 210
+        assert tracker.translation_completion_tokens == 45
+
+    async def test_no_tracker_does_not_fail(self):
+        client = AsyncMock()
+        client.chat.completions.create.return_value = _mock_completion(
+            "Hola", prompt_tokens=100, completion_tokens=20,
+        )
+
+        result = await translate_text(client, "Hello", "en", "es")
+        assert result == "Hola"
 
 
 class TestBuildSystemPrompt:
