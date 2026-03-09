@@ -25,12 +25,14 @@ class AudioSegmenter:
         *,
         vad_aggressiveness: int = 2,
         pcm_callback: Callable[[bytes], None] | None = None,
+        start_time: int = 0,
     ) -> None:
         self.audio_url = audio_url
         self.output_dir = output_dir
         self.segment_duration = segment_duration
         self._vad_aggressiveness = vad_aggressiveness
         self._pcm_callback = pcm_callback
+        self._start_time = start_time
         self.process: asyncio.subprocess.Process | None = None
         self._ffmpeg_popen: subprocess.Popen | None = None
         self._ytdlp_popen: subprocess.Popen | None = None
@@ -50,16 +52,18 @@ class AudioSegmenter:
 
     def _ffmpeg_continuous_args(self, input_source: str) -> list[str]:
         """Argumentos de ffmpeg para output PCM continuo a stdout."""
-        return [
-            "ffmpeg",
-            "-loglevel", "warning",
+        cmd = ["ffmpeg", "-loglevel", "warning"]
+        if self._start_time > 0:
+            cmd.extend(["-ss", str(self._start_time)])
+        cmd.extend([
             "-i", input_source,
             "-ar", "16000",
             "-ac", "1",
             "-f", "s16le",
             "-acodec", "pcm_s16le",
             "pipe:1",
-        ]
+        ])
+        return cmd
 
     async def start(self) -> None:
         """Lanza ffmpeg leyendo de URL directa, output PCM a stdout."""

@@ -13,15 +13,26 @@ class Config:
     segment_duration: int = 0
     whisper_model: str = ""
     gpt_model: str = ""
-    subs_only: bool = False
     system_audio: bool = False
     diarize: bool = False
+    batch_vod: bool = False
+    benchmark: bool = False
     vad_aggressiveness: int = 0
+    cookies_browser: str = ""
+    start_time: int = 0
+    max_minutes: int = 0
+    no_cache: bool = False
+    speaker_gender: str = ""
+    speakers: int = 0
     verbose: bool = False
     api_key: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:
         load_dotenv()
+        if not self.cookies_browser:
+            self.cookies_browser = os.environ.get("LIVESUBS_COOKIES_BROWSER", "firefox")
+        if self.cookies_browser.lower() == "none":
+            self.cookies_browser = ""
         if not self.source_lang:
             self.source_lang = os.environ.get("LIVESUBS_SOURCE_LANG", "ja")
         if not self.target_lang:
@@ -49,6 +60,8 @@ class Config:
                 "OPENAI_API_KEY no encontrada. "
                 "Configura la variable de entorno o crea un archivo .env"
             )
+        if self.benchmark and not self.start_time:
+            self.start_time = 300
         if not self.system_audio and not self.url:
             raise ValueError(
                 "Se requiere una URL de YouTube, "

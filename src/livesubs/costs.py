@@ -14,7 +14,11 @@ PRICING: dict[str, dict[str, float]] = {
     # Whisper / transcripcion
     "whisper-1": {"per_minute": 0.006},
     "gpt-4o-transcribe": {"per_minute": 0.006},
+    "faster-whisper-local": {"per_minute": 0.00},
+    "local-turbo": {"per_minute": 0.00},
+    "local-v3": {"per_minute": 0.00},
     "gpt-4o-mini-transcribe": {"per_minute": 0.003},
+    "gpt-4o-transcribe-diarize": {"per_minute": 0.006},
     # GPT / traduccion
     "gpt-4o": {"input_mtok": 2.50, "output_mtok": 10.00},
     "gpt-4o-mini": {"input_mtok": 0.15, "output_mtok": 0.60},
@@ -101,6 +105,34 @@ class CostTracker:
             f"Total: ${total:.4f} USD",
         ]
         return "\n".join(lines)
+
+    def save_srt(self, logs_dir: Path, *, video_id: str = "") -> Path | None:
+        """Genera archivo SRT a partir de las entries. Retorna el path o None.
+
+        Si se pasa video_id, usa nombre estable ({video_id}.srt) para cache.
+        """
+        if not self.entries:
+            return None
+
+        from livesubs.subtitles import _format_timestamp
+
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        if video_id:
+            filename = f"{video_id}.srt"
+        else:
+            now = datetime.now()
+            filename = f"session_{now:%Y-%m-%d_%H-%M-%S}.srt"
+        path = logs_dir / filename
+
+        lines: list[str] = []
+        for i, entry in enumerate(self.entries, 1):
+            start = _format_timestamp(entry.start_time)
+            end = _format_timestamp(entry.start_time + entry.duration)
+            lines.append(f"{i}\n{start} --> {end}\n{entry.translation}\n")
+
+        path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("SRT guardado en: %s", path)
+        return path
 
     def save_markdown(self, logs_dir: Path) -> Path | None:
         """Guarda log de sesion como Markdown. Retorna el path o None."""

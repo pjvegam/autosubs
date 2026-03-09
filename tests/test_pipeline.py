@@ -227,12 +227,12 @@ class TestTranslateWorker:
 
             await _translate_worker(
                 client, config, text_queue, translated_queue,
-                stream_context="Canal: Test\nTitulo: Mi Stream",
+                stream_context="Channel: Test\nTitle: Mi Stream",
             )
 
         call_kwargs = mock_translate.call_args.kwargs
-        assert "Canal: Test" in call_kwargs["context"]
-        assert "Titulo: Mi Stream" in call_kwargs["context"]
+        assert "Channel: Test" in call_kwargs["context"]
+        assert "Title: Mi Stream" in call_kwargs["context"]
 
     async def test_accumulates_history_in_context(self):
         config = _make_config()
@@ -306,7 +306,7 @@ class TestTranslateWorker:
 
         # Verificar que el contexto incluye info del speaker
         call_kwargs = mock_translate.call_args.kwargs
-        assert "Hablante actual: [Speaker 2]" in call_kwargs["context"]
+        assert "Current speaker: [Speaker 2]" in call_kwargs["context"]
 
     async def test_without_diarizer_no_speaker_tag(self):
         config = _make_config()
@@ -430,39 +430,45 @@ class TestGetStreamContext:
 
     async def test_returns_live_and_context(self):
         client, config = self._make_client_config()
-        info = {"is_live": True, "title": "Mi Stream", "channel": "TestChannel"}
+        info = {"is_live": True, "id": "abc123", "title": "Mi Stream", "channel": "TestChannel"}
         mock_translate = AsyncMock(return_value="My Stream")
         with (
             patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
             patch("livesubs.pipeline.translate_text", mock_translate),
         ):
-            live, context = await _get_stream_context("https://example.com", client, config)
+            result = await _get_stream_context("https://example.com", client, config)
+            live, context, video_id = result
 
         assert live is True
-        assert "Canal: TestChannel" in context
+        assert "Channel: TestChannel" in context
         assert "Mi Stream (My Stream)" in context
+        assert video_id == "abc123"
 
     async def test_returns_vod_on_non_live(self):
         client, config = self._make_client_config()
-        info = {"is_live": False, "title": "Video", "channel": "Canal"}
+        info = {"is_live": False, "id": "vid456", "title": "Video", "channel": "Canal"}
         mock_translate = AsyncMock(return_value="Video translated")
         with (
             patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
             patch("livesubs.pipeline.translate_text", mock_translate),
         ):
-            live, context = await _get_stream_context("https://example.com", client, config)
+            result = await _get_stream_context("https://example.com", client, config)
+            live, context, video_id = result
 
         assert live is False
-        assert "Canal: Canal" in context
+        assert "Channel: Canal" in context
+        assert video_id == "vid456"
 
     async def test_falls_back_on_error(self):
         client, config = self._make_client_config()
         mock_info = AsyncMock(side_effect=RuntimeError("fail"))
         with patch("livesubs.pipeline.get_stream_info", mock_info):
-            live, context = await _get_stream_context("https://example.com", client, config)
+            result = await _get_stream_context("https://example.com", client, config)
+            live, context, video_id = result
 
         assert live is False
         assert context == ""
+        assert video_id == ""
 
     async def test_uses_uploader_fallback(self):
         client, config = self._make_client_config()
@@ -472,9 +478,9 @@ class TestGetStreamContext:
             patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
             patch("livesubs.pipeline.translate_text", mock_translate),
         ):
-            _live, context = await _get_stream_context("https://example.com", client, config)
+            _live, context, _ = await _get_stream_context("https://example.com", client, config)
 
-        assert "Canal: Uploader1" in context
+        assert "Channel: Uploader1" in context
 
     async def test_translates_title(self):
         client, config = self._make_client_config()
@@ -484,7 +490,7 @@ class TestGetStreamContext:
             patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
             patch("livesubs.pipeline.translate_text", mock_translate),
         ):
-            _, context = await _get_stream_context("https://example.com", client, config)
+            _, context, _ = await _get_stream_context("https://example.com", client, config)
 
         mock_translate.assert_called_once_with(
             client, "配信テスト", config.source_lang, config.target_lang,
@@ -499,9 +505,9 @@ class TestGetStreamContext:
             patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
             patch("livesubs.pipeline.translate_text", new_callable=AsyncMock, return_value=None),
         ):
-            _, context = await _get_stream_context("https://example.com", client, config)
+            _, context, _ = await _get_stream_context("https://example.com", client, config)
 
-        assert "Titulo: 配信テスト" in context
+        assert "Title: 配信テスト" in context
         assert "(" not in context
 
     async def test_no_translation_when_title_empty(self):
@@ -511,7 +517,7 @@ class TestGetStreamContext:
             patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
             patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate,
         ):
-            _, context = await _get_stream_context("https://example.com", client, config)
+            _, context, _ = await _get_stream_context("https://example.com", client, config)
 
         mock_translate.assert_not_called()
         assert "Titulo" not in context

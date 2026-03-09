@@ -4,10 +4,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from livesubs.stream import (
+    _ytdlp_base_args,
     get_audio_url,
     get_stream_info,
     get_stream_urls,
     is_live,
+    set_cookies_browser,
     ytdlp_pipe_audio_cmd,
 )
 
@@ -18,6 +20,37 @@ def _make_process(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0)
     proc.communicate.return_value = (stdout, stderr)
     proc.returncode = returncode
     return proc
+
+
+class TestCookiesBrowser:
+    def setup_method(self):
+        set_cookies_browser("")
+
+    def teardown_method(self):
+        set_cookies_browser("")
+
+    def test_base_args_without_cookies(self):
+        args = _ytdlp_base_args()
+        assert "--cookies-from-browser" not in args
+
+    def test_base_args_with_cookies(self):
+        set_cookies_browser("firefox")
+        args = _ytdlp_base_args()
+        idx = args.index("--cookies-from-browser")
+        assert args[idx + 1] == "firefox"
+
+    def test_cookies_in_pipe_cmd(self):
+        set_cookies_browser("chrome")
+        cmd = ytdlp_pipe_audio_cmd("https://example.com")
+        idx = cmd.index("--cookies-from-browser")
+        assert cmd[idx + 1] == "chrome"
+
+    def test_set_cookies_browser_overrides(self):
+        set_cookies_browser("firefox")
+        set_cookies_browser("chrome")
+        args = _ytdlp_base_args()
+        idx = args.index("--cookies-from-browser")
+        assert args[idx + 1] == "chrome"
 
 
 class TestYtdlpPipeAudioCmd:

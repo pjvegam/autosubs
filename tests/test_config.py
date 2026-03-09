@@ -16,7 +16,7 @@ class TestConfig:
         assert config.target_lang == "es"
         assert config.segment_duration == 5
         assert config.whisper_model == "gpt-4o-transcribe"
-        assert config.gpt_model == "gpt-4o-mini"
+        assert config.gpt_model == "gpt-4.1"
         assert config.verbose is False
 
     def test_langs_from_env_vars(self, monkeypatch):
