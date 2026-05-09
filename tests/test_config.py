@@ -7,8 +7,19 @@ from livesubs.config import Config
 
 class TestConfig:
     def test_create_with_explicit_api_key(self, monkeypatch):
-        monkeypatch.delenv("LIVESUBS_SOURCE_LANG", raising=False)
-        monkeypatch.delenv("LIVESUBS_TARGET_LANG", raising=False)
+        # Patch load_dotenv para que no re-cargue .env del proyecto
+        monkeypatch.setattr("livesubs.config.load_dotenv", lambda: None)
+        # Forzar defaults basicos (sin Gemini, sin OpenRouter, sin faster-whisper)
+        monkeypatch.setattr(
+            "livesubs.config.importlib.util.find_spec", lambda name: None,
+        )
+        for var in (
+            "LIVESUBS_SOURCE_LANG", "LIVESUBS_TARGET_LANG",
+            "GEMINI_API_KEY", "OPENROUTER_API_KEY",
+            "LIVESUBS_WHISPER_MODEL", "LIVESUBS_GPT_MODEL",
+            "LIVESUBS_SEGMENT_DURATION",
+        ):
+            monkeypatch.delenv(var, raising=False)
         config = Config(url="https://example.com", api_key="sk-test123")
         assert config.url == "https://example.com"
         assert config.api_key == "sk-test123"

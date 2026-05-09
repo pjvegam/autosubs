@@ -20,7 +20,13 @@ from livesubs.vad import AudioChunk
 
 
 def _make_config(**kwargs) -> Config:
-    defaults = dict(url="https://example.com", api_key="sk-test", segment_duration=5)
+    defaults = dict(
+        url="https://example.com",
+        api_key="sk-test",
+        segment_duration=5,
+        whisper_model="gpt-4o-transcribe",  # explicit para no depender de env vars
+        gpt_model="gpt-4.1",
+    )
     defaults.update(kwargs)
     return Config(**defaults)
 
@@ -96,7 +102,7 @@ class TestTranscribeWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
 
         with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
-            mock_transcribe.return_value = "texto"
+            mock_transcribe.side_effect = ["texto uno", "texto dos", "texto tres"]
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk(duration=4.2))
                 await audio_queue.put(_make_chunk(duration=5.8))
@@ -109,7 +115,7 @@ class TestTranscribeWorker:
         while not text_queue.empty():
             items.append(await text_queue.get())
 
-        assert items[0] == (0, 4.2, "texto")
+        assert items[0] == (0, 4.2, "texto uno")
         assert items[1][0] == pytest.approx(4.2)
         assert items[1][1] == 5.8
         assert items[2][0] == pytest.approx(10.0)
@@ -126,7 +132,7 @@ class TestTranscribeWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
 
         with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
-            mock_transcribe.return_value = "texto"
+            mock_transcribe.side_effect = ["texto uno", "texto dos"]
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk(duration=4.2))
                 await audio_queue.put(_make_chunk(duration=5.8))

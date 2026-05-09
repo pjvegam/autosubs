@@ -1,4 +1,4 @@
-from livesubs.costs import PRICING, CostTracker, _escape_md_table
+from livesubs.costs import PRICING, CostTracker, escape_md_table
 
 
 class TestCostTracker:
@@ -24,25 +24,25 @@ class TestCostTracker:
     def test_whisper_cost_calculation(self):
         tracker = CostTracker(whisper_model="gpt-4o-transcribe")
         tracker.add_whisper(60.0)  # 1 minuto
-        cost = tracker._whisper_cost()
+        cost = tracker.whisper_cost()
         assert cost == PRICING["gpt-4o-transcribe"]["per_minute"]
 
     def test_whisper_cost_unknown_model(self):
         tracker = CostTracker(whisper_model="modelo-inventado")
         tracker.add_whisper(120.0)
-        assert tracker._whisper_cost() == 0.0
+        assert tracker.whisper_cost() == 0.0
 
     def test_translation_cost_calculation(self):
         tracker = CostTracker(translation_model="gpt-4.1")
         tracker.add_translation(1_000_000, 500_000)
-        input_cost, output_cost = tracker._translation_cost()
+        input_cost, output_cost = tracker.translation_cost()
         assert input_cost == PRICING["gpt-4.1"]["input_mtok"]
         assert output_cost == PRICING["gpt-4.1"]["output_mtok"] * 0.5
 
     def test_translation_cost_unknown_model(self):
         tracker = CostTracker(translation_model="modelo-inventado")
         tracker.add_translation(1000, 500)
-        assert tracker._translation_cost() == (0.0, 0.0)
+        assert tracker.translation_cost() == (0.0, 0.0)
 
     def test_summary_format(self):
         tracker = CostTracker(
@@ -151,10 +151,10 @@ class TestSessionLog:
 
 class TestEscapeMdTable:
     def test_escapes_pipe(self):
-        assert _escape_md_table("A | B") == "A \\| B"
+        assert escape_md_table("A | B") == "A \\| B"
 
     def test_replaces_newline(self):
-        assert _escape_md_table("line1\nline2") == "line1 line2"
+        assert escape_md_table("line1\nline2") == "line1 line2"
 
     def test_plain_text_unchanged(self):
-        assert _escape_md_table("hello world") == "hello world"
+        assert escape_md_table("hello world") == "hello world"
