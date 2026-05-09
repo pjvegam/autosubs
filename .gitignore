@@ -19,3 +19,19 @@ wheels/
 
 # Session logs
 livesubs_logs/
+
+# Audio/video samples (temporales)
+*.mp3
+*.mp4
+*.mkv
+*.webm
+*.jpg
+*.png
+
+# Scratch
+test.md
+benchmark_models.md
+benchmark_results.md
+
+# Claude Code local config (no committeable)
+.claude/settings.local.json
