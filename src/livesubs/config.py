@@ -1,8 +1,41 @@
+import importlib.util
 import os
+import re
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from dotenv import load_dotenv
+
+LOGS_DIR = Path("livesubs_logs")
+YT_ID_RE = re.compile(r"(?:v=|youtu\.be/|/shorts/)([a-zA-Z0-9_-]{11})")
+
+
+def _default_whisper_model() -> str:
+    """Default ASR según API keys disponibles.
+
+    Orden de preferencia:
+    1. gemini-2.5-pro (si GEMINI_API_KEY) — mejor calidad/precio confirmada (Setup A)
+    2. local-turbo (si faster-whisper) — gratis pero alucinaciones de outro
+    3. gpt-4o-transcribe (fallback API)
+    """
+    if os.environ.get("GEMINI_API_KEY"):
+        return "gemini-2.5-pro"
+    if importlib.util.find_spec("faster_whisper") is not None:
+        return "local-turbo"
+    return "gpt-4o-transcribe"
+
+
+def _default_gpt_model() -> str:
+    """Default traductor según API keys disponibles.
+
+    Orden de preferencia:
+    1. anthropic/claude-haiku-4.5 (si OPENROUTER_API_KEY) — Setup A confirmado
+    2. gpt-4.1 (fallback OpenAI)
+    """
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return "anthropic/claude-haiku-4.5"
+    return "gpt-4.1"
 
 
 @dataclass
@@ -17,7 +50,11 @@ class Config:
     diarize: bool = False
     batch_vod: bool = False
     benchmark: bool = False
-    vad_aggressiveness: int = 0
+    benchmark_no_translate: bool = False
+    benchmark_translators: bool = False
+    benchmark_e2e: bool = False
+    fill_gaps: bool = False
+    vad_aggressiveness: int = -1
     cookies_browser: str = ""
     start_time: int = 0
     max_minutes: int = 0
@@ -37,19 +74,23 @@ class Config:
             self.source_lang = os.environ.get("LIVESUBS_SOURCE_LANG", "ja")
         if not self.target_lang:
             self.target_lang = os.environ.get("LIVESUBS_TARGET_LANG", "es")
-        if not self.segment_duration:
-            self.segment_duration = int(
-                os.environ.get("LIVESUBS_SEGMENT_DURATION", "5"),
-            )
         if not self.whisper_model:
             self.whisper_model = os.environ.get(
-                "LIVESUBS_WHISPER_MODEL", "gpt-4o-transcribe",
+                "LIVESUBS_WHISPER_MODEL", _default_whisper_model(),
             )
+        if not self.segment_duration:
+            env_dur = os.environ.get("LIVESUBS_SEGMENT_DURATION", "")
+            if env_dur:
+                self.segment_duration = int(env_dur)
+            elif self.whisper_model.startswith("local-"):
+                self.segment_duration = 8
+            else:
+                self.segment_duration = 5
         if not self.gpt_model:
-            self.gpt_model = os.environ.get("LIVESUBS_GPT_MODEL", "gpt-4.1")
+            self.gpt_model = os.environ.get("LIVESUBS_GPT_MODEL", _default_gpt_model())
         if not self.diarize:
             self.diarize = os.environ.get("LIVESUBS_DIARIZE", "").lower() in ("1", "true")
-        if not self.vad_aggressiveness:
+        if self.vad_aggressiveness < 0:
             self.vad_aggressiveness = int(
                 os.environ.get("LIVESUBS_VAD_AGGRESSIVENESS", "2"),
             )

@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,15 +18,20 @@ _EMPTY_PATTERN = re.compile(
 # Longitud minima para considerar una transcripcion valida
 _MIN_TEXT_LENGTH = 2
 
+# Un mismo caracter repetido 10+ veces seguidas (ej: えーーーーーーーーーー)
+_REPETITIVE_PATTERN = re.compile(r"(.)\1{9,}")
+
 
 def _is_hallucination(text: str) -> bool:
     """Detecta transcripciones que probablemente son alucinaciones de Whisper.
 
-    Filtra: texto vacio, solo puntuacion, o demasiado corto.
+    Filtra: texto vacio, solo puntuacion, demasiado corto, o caracteres repetitivos.
     """
     if len(text) < _MIN_TEXT_LENGTH:
         return True
-    return bool(_EMPTY_PATTERN.fullmatch(text))
+    if _EMPTY_PATTERN.fullmatch(text):
+        return True
+    return bool(_REPETITIVE_PATTERN.search(text))
 
 
 async def transcribe_audio(
@@ -57,6 +63,53 @@ async def transcribe_audio(
         logger.debug("Transcrito [%s]: %s", audio_path.name, text[:80])
         return text
     return None
+
+
+async def transcribe_gemini_chunk(
+    audio_path: Path,
+    language: str,
+    model: str = "gemini-2.5-pro",
+) -> str | None:
+    """Transcribe un chunk WAV con Gemini multimodal (audio inline).
+
+    Usa Files API NO — para chunks pequeños (5-8s, ~80-160KB) inline es mas rapido.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("GEMINI_API_KEY no configurada")
+        return None
+
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key)
+    audio_bytes = audio_path.read_bytes()
+
+    async def _call() -> str | None:
+        response = await client.aio.models.generate_content(
+            model=model,
+            contents=[
+                f"Transcribe este audio en {language}. Devuelve SOLO el texto transcrito, "
+                "sin explicaciones, sin markdown, sin comillas.",
+                types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+            ],
+        )
+        return response.text
+
+    try:
+        text = await with_retries(_call, f"Gemini transcribe {audio_path.name}")
+    except Exception as e:
+        logger.error("Error transcribiendo con Gemini: %s", e)
+        return None
+
+    if not text:
+        return None
+    text = text.strip().strip('"').strip()
+    if _is_hallucination(text):
+        logger.debug("Filtrado Gemini (hallucination): [%s] '%s'", audio_path.name, text)
+        return None
+    logger.debug("Gemini transcrito [%s]: %s", audio_path.name, text[:80])
+    return text
 
 
 @dataclass

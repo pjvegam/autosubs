@@ -17,18 +17,30 @@ PRICING: dict[str, dict[str, float]] = {
     "faster-whisper-local": {"per_minute": 0.00},
     "local-turbo": {"per_minute": 0.00},
     "local-v3": {"per_minute": 0.00},
+    "cohere-transcribe-03-2026": {"per_minute": 0.00},
     "gpt-4o-mini-transcribe": {"per_minute": 0.003},
     "gpt-4o-transcribe-diarize": {"per_minute": 0.006},
+    # Gemini audio: $1/M tokens, ~1500 tokens/min => $0.0015/min
+    "gemini-2.5-flash": {"per_minute": 0.0015},
+    "gemini-2.5-pro": {"per_minute": 0.0015},
     # GPT / traduccion
     "gpt-4o": {"input_mtok": 2.50, "output_mtok": 10.00},
     "gpt-4o-mini": {"input_mtok": 0.15, "output_mtok": 0.60},
     "gpt-4.1": {"input_mtok": 2.00, "output_mtok": 8.00},
     "gpt-4.1-mini": {"input_mtok": 0.40, "output_mtok": 1.60},
     "gpt-4.1-nano": {"input_mtok": 0.10, "output_mtok": 0.40},
+    # OpenRouter (passthrough sin markup)
+    "deepseek/deepseek-v4-flash": {"input_mtok": 0.14, "output_mtok": 0.28},
+    "deepseek/deepseek-v4-pro": {"input_mtok": 1.74, "output_mtok": 3.48},
+    "deepseek/deepseek-chat": {"input_mtok": 0.32, "output_mtok": 0.89},
+    "moonshotai/kimi-k2": {"input_mtok": 0.57, "output_mtok": 2.30},
+    "anthropic/claude-haiku-4.5": {"input_mtok": 1.00, "output_mtok": 5.00},
+    "google/gemini-2.5-flash": {"input_mtok": 0.30, "output_mtok": 2.50},
+    "google/gemini-2.5-pro": {"input_mtok": 1.25, "output_mtok": 10.00},
 }
 
 
-def _escape_md_table(text: str) -> str:
+def escape_md_table(text: str) -> str:
     """Escapa texto para celdas de tabla Markdown."""
     return text.replace("|", "\\|").replace("\n", " ")
 
@@ -70,12 +82,12 @@ class CostTracker:
             SessionEntry(start_time, duration, transcription, translation),
         )
 
-    def _whisper_cost(self) -> float:
+    def whisper_cost(self) -> float:
         prices = PRICING.get(self.whisper_model, {})
         per_minute = prices.get("per_minute", 0.0)
         return (self.whisper_seconds / 60) * per_minute
 
-    def _translation_cost(self) -> tuple[float, float]:
+    def translation_cost(self) -> tuple[float, float]:
         prices = PRICING.get(self.translation_model, {})
         input_cost = (
             (self.translation_prompt_tokens / 1_000_000)
@@ -89,8 +101,8 @@ class CostTracker:
 
     def summary(self) -> str:
         whisper_min = self.whisper_seconds / 60
-        whisper_cost = self._whisper_cost()
-        input_cost, output_cost = self._translation_cost()
+        whisper_cost = self.whisper_cost()
+        input_cost, output_cost = self.translation_cost()
         translation_cost = input_cost + output_cost
         total = whisper_cost + translation_cost
 
@@ -157,8 +169,8 @@ class CostTracker:
 
         for entry in self.entries:
             mm, ss = divmod(int(entry.start_time), 60)
-            tr = _escape_md_table(entry.transcription)
-            tl = _escape_md_table(entry.translation)
+            tr = escape_md_table(entry.transcription)
+            tl = escape_md_table(entry.translation)
             lines.append(f"| {mm:02d}:{ss:02d} | {tr} | {tl} |")
 
         lines.extend([
