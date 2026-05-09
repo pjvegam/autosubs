@@ -4,9 +4,9 @@ import asyncio
 import collections
 import contextlib
 import logging
-import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,7 +14,7 @@ from openai import AsyncOpenAI
 
 from livesubs.audio import AudioSegmenter
 from livesubs.capture import SystemAudioCapture
-from livesubs.config import Config
+from livesubs.config import LOGS_DIR, YT_ID_RE, Config
 from livesubs.costs import CostTracker
 from livesubs.overlay import SubtitleOverlay, run_overlay_loop
 from livesubs.player import MPVPlayer
@@ -22,14 +22,18 @@ from livesubs.stream import (
     cut_video,
     download_audio,
     download_vod,
-    get_audio_url,
     get_stream_info,
     get_stream_urls,
     set_cookies_browser,
     split_audio,
 )
-from livesubs.subtitles import SubtitleManager
-from livesubs.transcribe import TranscriptSegment, transcribe_audio, transcribe_verbose
+from livesubs.subtitles import SubtitleManager, srt_last_end_time
+from livesubs.transcribe import (
+    TranscriptSegment,
+    transcribe_audio,
+    transcribe_gemini_chunk,
+    transcribe_verbose,
+)
 from livesubs.translate import summarize_session, translate_text
 from livesubs.vad import AudioChunk
 
@@ -39,9 +43,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-LOGS_DIR = Path("livesubs_logs")
 MIN_SPEECH_RATIO = 0.15
-_YT_ID_RE = re.compile(r"(?:v=|youtu\.be/|/shorts/)([a-zA-Z0-9_-]{11})")
+
+# Circuit breaker para Gemini: si falla N veces consecutivas, lo "sacamos de
+# juego" por X minutos y todas las requests van directo a gpt-4o-transcribe.
+_GEMINI_FAIL_THRESHOLD = 5
+_GEMINI_COOLDOWN_SECONDS = 300  # 5 min
+
+
+@dataclass
+class _GeminiCircuit:
+    consecutive_failures: int = 0
+    cooldown_until: float = 0.0  # epoch seconds
+
+    def is_open(self) -> bool:
+        """True si Gemini esta 'fuera de juego' temporalmente."""
+        import time
+        return time.time() < self.cooldown_until
+
+    def record_success(self) -> None:
+        self.consecutive_failures = 0
+
+    def record_failure(self) -> None:
+        import time
+        self.consecutive_failures += 1
+        if self.consecutive_failures >= _GEMINI_FAIL_THRESHOLD:
+            self.cooldown_until = time.time() + _GEMINI_COOLDOWN_SECONDS
+            self.consecutive_failures = 0  # reset al activar cooldown
+            mins = _GEMINI_COOLDOWN_SECONDS // 60
+            logger.warning(
+                "Gemini desactivado por %d min tras %d fallos consecutivos. "
+                "Usando gpt-4o-transcribe.",
+                mins, _GEMINI_FAIL_THRESHOLD,
+            )
 
 
 def _get_local_model_size(whisper_model: str) -> str | None:
@@ -53,6 +87,29 @@ def _get_local_model_size(whisper_model: str) -> str | None:
             return "large-v3"
         case _:
             return None
+
+
+def _is_gemini_asr(whisper_model: str) -> bool:
+    """True si el modelo es Gemini (audio multimodal)."""
+    return whisper_model.startswith("gemini-")
+
+
+def _create_translate_client(gpt_model: str, openai_api_key: str) -> AsyncOpenAI:
+    """Crea cliente OpenAI-compatible segun el modelo.
+
+    - Modelos con "/" (ej: anthropic/claude-haiku-4.5) → OpenRouter
+    - Resto → OpenAI directo
+    """
+    import os
+    if "/" in gpt_model:
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise ValueError(
+                f"OPENROUTER_API_KEY no configurada para modelo '{gpt_model}'. "
+                "Agregala al .env o usa un modelo OpenAI (ej: gpt-4.1)",
+            )
+        return AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+    return AsyncOpenAI(api_key=openai_api_key)
 
 
 async def _load_local_whisper(model_size: str) -> LocalWhisperModel:
@@ -131,6 +188,9 @@ async def _transcribe_worker(
 ) -> None:
     """Lee chunks de audio, los transcribe secuencialmente (para lives)."""
     elapsed = start_time_offset
+    last_text: str | None = None
+    repeat_count = 0
+    gemini_circuit = _GeminiCircuit()
     while True:
         chunk: AudioChunk | None = await audio_queue.get()
         if chunk is None:
@@ -159,6 +219,28 @@ async def _transcribe_worker(
                     local_model.transcribe, chunk.path, config.source_lang,
                 )
                 text = " ".join(seg.text for seg in segments) if segments else None
+            elif _is_gemini_asr(config.whisper_model):
+                if gemini_circuit.is_open():
+                    # Circuit breaker activo: skip Gemini, ir directo a gpt-4o
+                    text = await transcribe_audio(
+                        client, chunk.path, config.source_lang, "gpt-4o-transcribe",
+                    )
+                else:
+                    text = await transcribe_gemini_chunk(
+                        chunk.path, config.source_lang, config.whisper_model,
+                    )
+                    if text is None:
+                        gemini_circuit.record_failure()
+                        logger.warning(
+                            "Gemini fallo en %s, fallback a gpt-4o-transcribe",
+                            chunk.path.name,
+                        )
+                        text = await transcribe_audio(
+                            client, chunk.path, config.source_lang,
+                            "gpt-4o-transcribe",
+                        )
+                    else:
+                        gemini_circuit.record_success()
             else:
                 text = await transcribe_audio(
                     client, chunk.path, config.source_lang, config.whisper_model,
@@ -171,6 +253,12 @@ async def _transcribe_worker(
             chunk.path.unlink()
 
         if text:
+            if text == last_text:
+                repeat_count += 1
+                logger.debug("Descartado repetido #%d: '%s'", repeat_count, text[:40])
+                continue
+            last_text = text
+            repeat_count = 0
             if tracker:
                 tracker.add_whisper(chunk.duration)
             await text_queue.put((start_time, chunk.duration, text))
@@ -190,10 +278,33 @@ async def _transcribe_worker_parallel(
     """Transcribe multiples chunks en paralelo, mantiene orden (para VODs)."""
     semaphore = asyncio.Semaphore(max_concurrent)
     task_queue: asyncio.Queue[tuple[asyncio.Task[str | None], float] | None] = asyncio.Queue()
+    gemini_circuit = _GeminiCircuit()
 
     async def _do_transcribe(audio_path: Path) -> str | None:
         async with semaphore:
             try:
+                if _is_gemini_asr(config.whisper_model):
+                    if gemini_circuit.is_open():
+                        return await transcribe_audio(
+                            client, audio_path, config.source_lang,
+                            "gpt-4o-transcribe",
+                        )
+                    text = await transcribe_gemini_chunk(
+                        audio_path, config.source_lang, config.whisper_model,
+                    )
+                    if text is None:
+                        gemini_circuit.record_failure()
+                        logger.warning(
+                            "Gemini fallo en %s, fallback a gpt-4o-transcribe",
+                            audio_path.name,
+                        )
+                        text = await transcribe_audio(
+                            client, audio_path, config.source_lang,
+                            "gpt-4o-transcribe",
+                        )
+                    else:
+                        gemini_circuit.record_success()
+                    return text
                 return await transcribe_audio(
                     client, audio_path, config.source_lang, config.whisper_model,
                 )
@@ -323,6 +434,8 @@ async def _subtitle_writer(
     sub_manager: SubtitleManager,
     player: MPVPlayer,
     live: bool,
+    *,
+    srt_preloaded: bool = False,
 ) -> None:
     """Lee texto traducido y lo muestra en MPV.
 
@@ -331,10 +444,10 @@ async def _subtitle_writer(
     Si va atrasado, garantiza un tiempo minimo de lectura entre subtitulos.
     VOD: usa archivo SRT con timestamps exactos.
     """
-    first_subtitle = True
+    first_subtitle = not srt_preloaded
     min_display = config.segment_duration * 0.6
     last_shown: float | None = None
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     while True:
         item = await translated_queue.get()
         if item is None:
@@ -344,7 +457,7 @@ async def _subtitle_writer(
         mm, ss = divmod(int(start_time), 60)
 
         try:
-            logger.info("Subtitulo [%02d:%02d]: %s", mm, ss, text[:80])
+            logger.info("Subtitulo [%02d:%02d]: %s", mm, ss, text)
 
             if live:
                 duration_ms = int(duration * 1000)
@@ -390,7 +503,7 @@ async def _overlay_subtitle_writer(
         start_time, _, text = item
         mm, ss = divmod(int(start_time), 60)
         try:
-            logger.info("Subtitulo [%02d:%02d]: %s", mm, ss, text[:80])
+            logger.info("Subtitulo [%02d:%02d]: %s", mm, ss, text)
             overlay.update_text(text)
         except Exception as e:
             logger.warning("Error mostrando subtitulo en overlay: %s", e)
@@ -426,27 +539,29 @@ async def _create_diarizer(*, vod: bool = False) -> DiarizationEngine:
     return engine
 
 
-async def _run_cached_pipeline(config: Config, srt_path: Path) -> None:
+async def _run_cached_pipeline(
+    config: Config, srt_path: Path, video_id: str = "",
+) -> None:
     """Abre MPV con video + SRT cacheado, sin re-traducir."""
     logger.info("Usando SRT cacheado, saltando transcripcion/traduccion")
 
+    # Intentar usar video cacheado
+    cached_video = LOGS_DIR / f"{video_id}.mkv" if video_id else None
+
     player = MPVPlayer(config.ipc_pipe)
-    tmp_dir: Path | None = None
     try:
-        if config.start_time > 0:
-            tmp_dir = Path(tempfile.mkdtemp(prefix="livesubs_"))
-            full_video = str(tmp_dir / "full.mkv")
-            cut_file = str(tmp_dir / "video.mkv")
-            await download_vod(config.url, full_video)
-            await cut_video(full_video, cut_file, config.start_time)
-            Path(full_video).unlink(missing_ok=True)
-            await player.start(cut_file)
+        if cached_video and cached_video.exists():
+            logger.info("Video encontrado en cache: %s", cached_video.name)
+            await player.start(str(cached_video))
             await player.connect()
             await player.sub_add(srt_path)
-            await player.command(
-                "set_property", "sub-delay", str(-config.start_time),
-            )
+            # SRT tiene timestamps absolutos, seekear video a la posicion
+            if config.start_time > 0:
+                await player.command(
+                    "set_property", "time-pos", str(config.start_time),
+                )
         else:
+            logger.info("Video no cacheado, obteniendo URLs del stream...")
             video_url, mpv_audio_url, _ = await get_stream_urls(config.url)
             await player.start(video_url, audio_url=mpv_audio_url)
             await player.connect()
@@ -456,8 +571,6 @@ async def _run_cached_pipeline(config: Config, srt_path: Path) -> None:
         await player.wait()
     finally:
         await player.close()
-        if tmp_dir:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
     logger.info("livesubs finalizado (cache)")
 
 
@@ -465,6 +578,21 @@ async def run_pipeline(config: Config) -> None:
     """Orquesta todo el pipeline de subtitulos."""
     logger.info("Iniciando livesubs...")
     set_cookies_browser(config.cookies_browser)
+
+    if config.benchmark_e2e:
+        from livesubs.benchmark import run_e2e_benchmark
+        await run_e2e_benchmark(config)
+        return
+
+    if config.fill_gaps:
+        from livesubs.recover import fill_gaps as recover_fill_gaps
+        await recover_fill_gaps(config)
+        return
+
+    if config.benchmark_translators:
+        from livesubs.benchmark import run_translator_benchmark
+        await run_translator_benchmark(config)
+        return
 
     if config.benchmark:
         from livesubs.benchmark import run_benchmark
@@ -475,15 +603,18 @@ async def run_pipeline(config: Config) -> None:
         await _run_system_audio_pipeline(config)
         return
 
-    # Cache rapido: extraer video_id de la URL sin llamar a yt-dlp
-    if not config.no_cache and (m := _YT_ID_RE.search(config.url)):
-        cached_srt = LOGS_DIR / f"{m.group(1)}.srt"
+    # SRT cache: determinar cuanto hay traducido
+    cache_end = 0.0
+    if not config.no_cache and (m := YT_ID_RE.search(config.url)):
+        vid = m.group(1)
+        cached_srt = LOGS_DIR / f"{vid}.srt"
         if cached_srt.exists():
-            logger.info("SRT encontrado en cache: %s", cached_srt)
-            await _run_cached_pipeline(config, cached_srt)
-            return
+            cache_end = srt_last_end_time(cached_srt)
+            if cache_end > 0:
+                mm, ss = divmod(int(cache_end), 60)
+                logger.info("SRT cache: %02d:%02d traducido", mm, ss)
 
-    client = AsyncOpenAI(api_key=config.api_key)
+    client = _create_translate_client(config.gpt_model, config.api_key)
     tracker = CostTracker(
         whisper_model=config.whisper_model,
         translation_model=config.gpt_model,
@@ -509,7 +640,8 @@ async def run_pipeline(config: Config) -> None:
     if stream_context:
         logger.info("Contexto del stream: %s", stream_context.replace("\n", " | "))
 
-    await _run_mpv_pipeline(config, live, stream_context, tracker, video_id)
+    await _run_mpv_pipeline(config, live, stream_context, tracker, video_id,
+                            cache_end=cache_end)
 
 
 async def _run_batch_vod_pipeline(
@@ -526,7 +658,8 @@ async def _run_batch_vod_pipeline(
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="livesubs_batch_"))
     srt_path = tmp_dir / "livesubs.srt"
-    client = AsyncOpenAI(api_key=config.api_key)
+    asr_client = AsyncOpenAI(api_key=config.api_key)
+    translate_client = _create_translate_client(config.gpt_model, config.api_key)
     chunk_seconds = 1200  # 20 min
     player: MPVPlayer | None = None
 
@@ -558,7 +691,7 @@ async def _run_batch_vod_pipeline(
         # Transcribir primer chunk antes de abrir MPV
         logger.info("Transcribiendo chunk 1/%d...", len(chunks))
         first_segs = await transcribe_verbose(
-            client, chunks[0], config.source_lang,
+            asr_client, chunks[0], config.source_lang,
         )
         chunks[0].unlink(missing_ok=True)
 
@@ -593,7 +726,7 @@ async def _run_batch_vod_pipeline(
                 context = "\n".join(context_parts)
 
                 translated = await translate_text(
-                    client, seg.text, config.source_lang,
+                    translate_client, seg.text, config.source_lang,
                     config.target_lang, config.gpt_model,
                     context=context, tracker=tracker,
                 )
@@ -645,7 +778,7 @@ async def _run_batch_vod_pipeline(
 
                 logger.info("Transcribiendo chunk %d/%d...", i + 1, len(chunks))
                 segs = await transcribe_verbose(
-                    client, chunk_path, config.source_lang,
+                    asr_client, chunk_path, config.source_lang,
                 )
                 chunk_path.unlink(missing_ok=True)
                 if not segs:
@@ -713,32 +846,54 @@ async def _monitor_mpv_simple(player: MPVPlayer) -> None:
 async def _run_mpv_pipeline(
     config: Config, live: bool, stream_context: str = "",
     tracker: CostTracker | None = None, video_id: str = "",
+    cache_end: float = 0.0,
 ) -> None:
     """Pipeline con MPV: video + subtitulos SRT (modo VOD)."""
     tmp_dir = Path(tempfile.mkdtemp(prefix="livesubs_"))
-    srt_path = tmp_dir / "livesubs.srt"
     audio_dir = tmp_dir / "audio"
 
     vod_start = config.start_time if not live else 0
-    cut_file: str | None = None
+    translate_from = max(cache_end, float(vod_start))
+    bg_download: asyncio.Task | None = None
 
-    if vod_start > 0 and not live:
-        # Descargar VOD completo + cortar desde start_time
-        full_video = str(tmp_dir / "full.mkv")
-        cut_file = str(tmp_dir / "video.mkv")
-        logger.info("Descargando VOD + obteniendo audio...")
-        download_task = asyncio.create_task(download_vod(config.url, full_video))
-        ffmpeg_audio_url = await get_audio_url(config.url)
-        await download_task
-        await cut_video(full_video, cut_file, vod_start)
-        Path(full_video).unlink(missing_ok=True)
+    # SRT: escribir directo al cache si hay video_id
+    if video_id:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        srt_path = LOGS_DIR / f"{video_id}.srt"
+        sub_manager = SubtitleManager(srt_path, append=cache_end > 0)
     else:
-        logger.info("Obteniendo URLs del stream...")
-        video_url, mpv_audio_url, ffmpeg_audio_url = await get_stream_urls(
-            config.url,
-        )
+        srt_path = tmp_dir / "livesubs.srt"
+        sub_manager = SubtitleManager(srt_path)
 
-    client = AsyncOpenAI(api_key=config.api_key)
+    if cache_end > 0:
+        mm, ss = divmod(int(translate_from), 60)
+        logger.info("Continuando traduccion desde %02d:%02d", mm, ss)
+
+    # Obtener URLs para streaming (MPV + ffmpeg audio)
+    logger.info("Obteniendo URLs del stream...")
+    video_url, mpv_audio_url, ffmpeg_audio_url = await get_stream_urls(
+        config.url,
+    )
+
+    # Video local: necesario para seek, opcional como cache
+    cached_video: Path | None = None
+    if not live and video_id:
+        cached_video = LOGS_DIR / f"{video_id}.mkv"
+        if cached_video.exists():
+            logger.info("Video encontrado en cache: %s", cached_video.name)
+        elif vod_start > 0:
+            logger.info("Descargando video para seek a %ds...", vod_start)
+            await download_vod(config.url, str(cached_video))
+        else:
+            logger.info("Descargando VOD a cache en background: %s", cached_video.name)
+            bg_download = asyncio.create_task(
+                download_vod(config.url, str(cached_video)),
+            )
+
+    # Cliente OpenAI para transcripcion API (gpt-4o-transcribe etc).
+    # Cliente potencialmente OpenRouter para traduccion segun gpt_model.
+    asr_client = AsyncOpenAI(api_key=config.api_key)
+    translate_client = _create_translate_client(config.gpt_model, config.api_key)
     player = MPVPlayer(config.ipc_pipe)
     diarizer: DiarizationEngine | None = None
 
@@ -753,13 +908,17 @@ async def _run_mpv_pipeline(
 
     pcm_callback = diarizer.push_pcm if diarizer else None
 
+    # Audio: archivo local para seek confiable, URL solo para streaming
+    audio_source = ffmpeg_audio_url
+    if cached_video is not None and cached_video.exists():
+        audio_source = str(cached_video)
+
     segmenter = AudioSegmenter(
-        ffmpeg_audio_url, audio_dir, config.segment_duration,
+        audio_source, audio_dir, config.segment_duration,
         vad_aggressiveness=config.vad_aggressiveness,
         pcm_callback=pcm_callback,
-        start_time=vod_start,
+        start_time=int(translate_from),
     )
-    sub_manager = SubtitleManager(srt_path)
 
     audio_queue: asyncio.Queue = asyncio.Queue(maxsize=5)
     text_queue: asyncio.Queue = asyncio.Queue(maxsize=5)
@@ -769,18 +928,30 @@ async def _run_mpv_pipeline(
     transcriber = _transcribe_worker if live or local_model else _transcribe_worker_parallel
 
     try:
-        if cut_file:
-            await player.start(cut_file)
-            await player.connect()
-            await player.command(
-                "set_property", "sub-delay", str(-vod_start),
-            )
+        use_local = cached_video is not None and cached_video.exists() and vod_start > 0
+        if use_local:
+            await player.start(str(cached_video))
         else:
             await player.start(video_url, audio_url=mpv_audio_url, live=live)
-            await player.connect()
-            if live:
-                await player.setup_osd_for_subs()
+        await player.connect()
+        if live:
+            await player.setup_osd_for_subs()
+
+        # Pre-cargar SRT con contenido cacheado
+        if cache_end > 0:
+            await player.sub_add(srt_path)
+
+        if vod_start > 0:
+            await player.command("set_property", "time-pos", str(vod_start))
         await segmenter.start()
+
+        # Sincronizar timestamps SRT con la posicion del video en MPV.
+        mpv_pos = await player.get_time_pos() or 0.0
+        time_offset = max(mpv_pos, translate_from)
+        if time_offset > 1.0 and translate_from == 0:
+            logger.info(
+                "Offset A/V detectado: MPV en %.1fs, ajustando SRT", time_offset,
+            )
 
         logger.info("Pipeline MPV en marcha. Subtitulos en: %s", srt_path)
 
@@ -788,15 +959,15 @@ async def _run_mpv_pipeline(
             tg.create_task(segmenter.poll_chunks(audio_queue))
             tg.create_task(
                 transcriber(
-                    client, config, audio_queue, text_queue,
-                    tracker=tracker, start_time_offset=float(vod_start),
+                    asr_client, config, audio_queue, text_queue,
+                    tracker=tracker, start_time_offset=time_offset,
                     max_seconds=config.max_minutes * 60.0,
                     local_model=local_model,
                 )
             )
             tg.create_task(
                 _translate_worker(
-                    client, config, text_queue, translated_queue,
+                    translate_client, config, text_queue, translated_queue,
                     stream_context=stream_context,
                     diarizer=diarizer,
                     tracker=tracker,
@@ -805,6 +976,7 @@ async def _run_mpv_pipeline(
             tg.create_task(
                 _subtitle_writer(
                     config, translated_queue, sub_manager, player, live,
+                    srt_preloaded=cache_end > 0,
                 )
             )
             tg.create_task(_monitor_mpv(player, segmenter))
@@ -821,11 +993,26 @@ async def _run_mpv_pipeline(
             await diarizer.stop()
         await segmenter.stop()
         await player.close()
+        # Esperar descarga en background si sigue corriendo
+        if bg_download is not None:
+            if not bg_download.done():
+                logger.info("Esperando descarga de video en background...")
+                try:
+                    await asyncio.wait_for(bg_download, timeout=300)
+                    logger.info("Video cacheado en: %s", cached_video)
+                except (TimeoutError, Exception) as dl_err:
+                    logger.warning("Descarga en background fallo: %s", dl_err)
+                    bg_download.cancel()
+            elif bg_download.exception() is None:
+                logger.info("Video cacheado en: %s", cached_video)
+            else:
+                logger.warning("Descarga en background fallo: %s", bg_download.exception())
         shutil.rmtree(tmp_dir, ignore_errors=True)
         logger.debug("Directorio temporal limpiado: %s", tmp_dir)
         if tracker:
             logger.info("\n%s", tracker.summary())
-            tracker.save_srt(LOGS_DIR, video_id=video_id)
+            if not video_id:
+                tracker.save_srt(LOGS_DIR)
             tracker.save_markdown(LOGS_DIR)
         logger.info("livesubs finalizado")
 
@@ -837,7 +1024,8 @@ async def _run_system_audio_pipeline(config: Config) -> None:
     tmp_dir = Path(tempfile.mkdtemp(prefix="livesubs_"))
     audio_dir = tmp_dir / "audio"
 
-    client = AsyncOpenAI(api_key=config.api_key)
+    asr_client = AsyncOpenAI(api_key=config.api_key)
+    translate_client = _create_translate_client(config.gpt_model, config.api_key)
     tracker = CostTracker(
         whisper_model=config.whisper_model,
         translation_model=config.gpt_model,
@@ -879,13 +1067,13 @@ async def _run_system_audio_pipeline(config: Config) -> None:
             tg.create_task(capture.poll_chunks(audio_queue))
             tg.create_task(
                 _transcribe_worker(
-                    client, config, audio_queue, text_queue,
+                    asr_client, config, audio_queue, text_queue,
                     tracker=tracker, local_model=local_model,
                 )
             )
             tg.create_task(
                 _translate_worker(
-                    client, config, text_queue, translated_queue,
+                    translate_client, config, text_queue, translated_queue,
                     diarizer=diarizer,
                     tracker=tracker,
                 )
