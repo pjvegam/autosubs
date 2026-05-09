@@ -14,6 +14,8 @@ dependencies = [
 [project.optional-dependencies]
 diarize = ["nemo_toolkit[asr]>=2.0", "torch>=2.0", "torchaudio>=2.0"]
 local-whisper = ["faster-whisper>=1.1.0", "nvidia-cublas-cu12>=12.4"]
+gemini = ["google-genai>=1.0"]
+cohere-asr = ["transformers>=4.46", "librosa>=0.10", "accelerate>=0.30"]
 
 [project.scripts]
 livesubs = "livesubs.main:main"
