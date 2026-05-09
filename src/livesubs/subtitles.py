@@ -1,7 +1,10 @@
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_TS_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})")
 
 
 def _format_timestamp(seconds: float) -> str:
@@ -13,14 +16,36 @@ def _format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
+def _parse_timestamp(ts: str) -> float:
+    """Parsea HH:MM:SS,mmm a segundos."""
+    if m := _TS_RE.match(ts):
+        return int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3]) + int(m[4]) / 1000
+    return 0.0
+
+
+def srt_last_end_time(srt_path: Path) -> float:
+    """Retorna el end timestamp de la ultima entrada SRT en segundos, o 0.0."""
+    last_end = 0.0
+    with open(srt_path, encoding="utf-8") as f:
+        for line in f:
+            if " --> " in line:
+                end_str = line.split(" --> ")[1].strip()
+                last_end = _parse_timestamp(end_str)
+    return last_end
+
+
 class SubtitleManager:
     """Gestiona un archivo SRT append-only."""
 
-    def __init__(self, srt_path: Path) -> None:
+    def __init__(self, srt_path: Path, *, append: bool = False) -> None:
         self.srt_path = srt_path
-        self._index = 1
-        # Crear archivo vacio
-        self.srt_path.write_text("", encoding="utf-8")
+        if append and srt_path.exists():
+            with open(srt_path, encoding="utf-8") as f:
+                count = sum(1 for line in f if " --> " in line)
+            self._index = count + 1
+        else:
+            self._index = 1
+            self.srt_path.write_text("", encoding="utf-8")
 
     def add_entry(self, start: float, end: float, text: str) -> None:
         """Agrega una entrada al archivo SRT."""

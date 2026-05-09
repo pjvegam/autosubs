@@ -39,10 +39,10 @@ def _find_deno() -> str | None:
     return None
 
 
-def _parse_time_value(raw: str) -> int:
-    """Parsea un valor de tiempo de YouTube a segundos.
+def parse_time_value(raw: str) -> int:
+    """Parsea un valor de tiempo a segundos.
 
-    Soporta: '195', '195s', '3m15s', '1h2m3s'.
+    Soporta: '195', '195s', '3m15s', '1h2m3s', '1:30:00', '3:15'.
     """
     raw = raw.strip()
     if not raw:
@@ -55,6 +55,13 @@ def _parse_time_value(raw: str) -> int:
     # Formato con sufijo simple: '195s'
     if re.fullmatch(r"\d+s", raw):
         return int(raw[:-1])
+
+    # Formato colon: 'HH:MM:SS' o 'MM:SS'
+    if match := re.fullmatch(r"(?:(\d+):)?(\d+):(\d+)", raw):
+        h = int(match.group(1) or 0)
+        m = int(match.group(2))
+        s = int(match.group(3))
+        return h * 3600 + m * 60 + s
 
     # Formato HMS: '1h2m3s', '3m15s', '1h30s', '1h2m', etc.
     match = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?", raw)
@@ -76,7 +83,7 @@ def parse_start_time(url: str) -> tuple[str, int]:
     params = parse_qs(parsed.query)
 
     raw_t = params.pop("t", [None])
-    seconds = _parse_time_value(raw_t[0]) if raw_t and raw_t[0] else 0
+    seconds = parse_time_value(raw_t[0]) if raw_t and raw_t[0] else 0
 
     # Reconstruir URL sin ?t=
     clean_query = urlencode(params, doseq=True)

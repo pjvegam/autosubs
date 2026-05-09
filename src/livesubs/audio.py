@@ -13,6 +13,20 @@ logger = logging.getLogger(__name__)
 # Leer ~1s de audio por iteracion (16kHz mono 16-bit)
 READ_CHUNK_BYTES = 16000 * 2
 
+# EQ optimizado para transcripcion de voz (inspirado en FxSound "Transcription")
+# - highpass 80Hz: elimina rumble/graves que no son voz
+# - boost 250Hz +5dB: refuerza fundamental de voz
+# - boost 4500Hz +8dB: claridad de consonantes (s, t, k)
+# - lowpass 8000Hz: elimina ruido de alta frecuencia
+# - acompressor: compresion dinamica para nivelar volumen (partes quietas mas audibles)
+TRANSCRIPTION_AUDIO_FILTER = (
+    "highpass=f=80,"
+    "equalizer=f=250:t=h:w=100:g=5,"
+    "equalizer=f=4500:t=h:w=1500:g=8,"
+    "lowpass=f=8000,"
+    "acompressor=threshold=-20dB:ratio=4:attack=5:release=50"
+)
+
 
 class AudioSegmenter:
     """Segmenta audio de un stream en chunks WAV usando ffmpeg + VAD."""
@@ -51,12 +65,17 @@ class AudioSegmenter:
         )
 
     def _ffmpeg_continuous_args(self, input_source: str) -> list[str]:
-        """Argumentos de ffmpeg para output PCM continuo a stdout."""
+        """Argumentos de ffmpeg para output PCM continuo a stdout.
+
+        Aplica EQ de transcripcion: corta graves/agudos, boost en frecuencias
+        de voz (250Hz, 4.5kHz) y compresion dinamica para normalizar volumen.
+        """
         cmd = ["ffmpeg", "-loglevel", "warning"]
         if self._start_time > 0:
             cmd.extend(["-ss", str(self._start_time)])
         cmd.extend([
             "-i", input_source,
+            "-af", TRANSCRIPTION_AUDIO_FILTER,
             "-ar", "16000",
             "-ac", "1",
             "-f", "s16le",

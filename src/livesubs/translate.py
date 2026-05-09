@@ -65,7 +65,8 @@ async def translate_text(
                 response.usage.prompt_tokens,
                 response.usage.completion_tokens,
             )
-        return response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
+        return content.strip() if content else ""
 
     translated = await with_retries(_call, "Traduccion")
     if translated:
@@ -96,7 +97,8 @@ async def summarize_session(
                 {"role": "user", "content": joined},
             ],
         )
-        return response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
+        return content.strip() if content else ""
 
     result = await with_retries(_call, "Resumen de sesion")
     return result or ""

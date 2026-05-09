@@ -115,7 +115,7 @@ class MPVPlayer:
                     data = json.loads(raw.decode())
                 except json.JSONDecodeError:
                     continue
-                if "request_id" in data:
+                if data.get("request_id") == req_id:
                     return data
                 # Es un evento async de MPV, ignorar
             return None
