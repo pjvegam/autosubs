@@ -4,7 +4,7 @@ import logging
 import sys
 
 from livesubs.config import Config
-from livesubs.stream import parse_start_time
+from livesubs.stream import parse_start_time, parse_time_value
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,17 +25,21 @@ def parse_args() -> argparse.Namespace:
         help="Idioma de los subtitulos (default: LIVESUBS_TARGET_LANG o es)",
     )
     parser.add_argument(
-        "--segment-duration", type=int, default=0,
-        help="Duracion de segmento en segundos (default: LIVESUBS_SEGMENT_DURATION o 5)",
+        "--segment-duration", default="",
+        help="Duracion de segmento. Acepta: 5, 5s, 30s (default: LIVESUBS_SEGMENT_DURATION o 5)",
     )
     parser.add_argument(
         "--whisper-model", default="",
-        help="Modelo de transcripcion: gpt-4o-transcribe (API), local-turbo (GPU), "
-             "local-v3 (GPU). Default: LIVESUBS_WHISPER_MODEL o gpt-4o-transcribe",
+        help="Modelo de transcripcion: gemini-2.5-pro (API), gpt-4o-transcribe (API), "
+             "local-turbo (GPU), local-v3 (GPU). Default: LIVESUBS_WHISPER_MODEL, "
+             "gemini-2.5-pro si GEMINI_API_KEY, sino local-turbo, sino gpt-4o-transcribe",
     )
     parser.add_argument(
         "--gpt-model", default="",
-        help="Modelo de GPT (default: LIVESUBS_GPT_MODEL o gpt-4.1)",
+        help="Modelo de traduccion. OpenAI (gpt-4.1, gpt-4.1-mini) o "
+             "OpenRouter con formato provider/modelo (anthropic/claude-haiku-4.5, "
+             "deepseek/deepseek-chat, etc). Default: anthropic/claude-haiku-4.5 si "
+             "OPENROUTER_API_KEY, sino gpt-4.1",
     )
     parser.add_argument(
         "--cookies-browser", default="",
@@ -59,16 +63,34 @@ def parse_args() -> argparse.Namespace:
         help="Compara whisper-1 vs gpt-4o-transcribe sobre el mismo audio",
     )
     parser.add_argument(
-        "--vad-aggressiveness", type=int, default=0,
+        "--benchmark-no-translate", action="store_true",
+        help="En modo benchmark, saltar traduccion (solo comparar transcripcion)",
+    )
+    parser.add_argument(
+        "--benchmark-translators", action="store_true",
+        help="Comparar multiples traductores sobre transcripcion cacheada de gpt-4o",
+    )
+    parser.add_argument(
+        "--benchmark-e2e", action="store_true",
+        help="Test E2E: Gemini 2.5 Pro audio->ES en una sola call",
+    )
+    parser.add_argument(
+        "--fill-gaps", action="store_true",
+        help="Rellena gaps en SRT cacheado usando video local + gpt-4o-transcribe",
+    )
+    parser.add_argument(
+        "--vad-aggressiveness", type=int, default=-1,
         help="Agresividad del VAD 0-3 (default: 2)",
     )
     parser.add_argument(
-        "--start-time", type=int, default=0,
-        help="Tiempo de inicio en segundos (override sobre ?t= en URL)",
+        "--start-time", default="",
+        help="Tiempo de inicio. Acepta: 3600, 3600s, 1h, 1h30m, 1:30:00, 30:00 "
+             "(override sobre ?t= en URL)",
     )
     parser.add_argument(
-        "--max-minutes", type=int, default=0,
-        help="Limite de minutos a traducir (default: 0 = sin limite)",
+        "--max-minutes", default="",
+        help="Limite de duracion a traducir. Acepta: 100, 100m, 1h40m, 1:40:00 "
+             "(default: sin limite)",
     )
     parser.add_argument(
         "--no-cache", action="store_true",
@@ -96,13 +118,40 @@ def setup_logging(verbose: bool) -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    # Silenciar logs de httpx (spam de cada HTTP request)
+    # Silenciar logs ruidosos de SDKs externos
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Gemini SDK: spam "AFC is enabled with max remote calls: 10" en cada call
+    logging.getLogger("google_genai.models").setLevel(logging.WARNING)
+    # OpenAI SDK: retries internos automaticos (nuestro with_retries ya loggea fallos reales)
+    logging.getLogger("openai._base_client").setLevel(logging.WARNING)
 
 
 async def async_main(config: Config) -> None:
     from livesubs.pipeline import run_pipeline
     await run_pipeline(config)
+
+
+def _parse_time_arg(value: str, arg_name: str, *, unit: str = "seconds") -> int:
+    """Parsea CLI time arg.
+
+    Entero puro = se interpreta en la unidad natural del flag (backward compat):
+      --start-time 100        → 100 segundos
+      --max-minutes 100       → 100 minutos
+      --segment-duration 5    → 5 segundos
+    Con sufijo/colon = se parsea como tiempo y se convierte a la unidad:
+      --max-minutes 1h40m     → 100 minutos
+      --start-time 1:30:00    → 5400 segundos
+    """
+    if not value:
+        return 0
+    raw = value.strip()
+    if raw.isdigit():
+        return int(raw)
+    seconds = parse_time_value(raw)
+    if seconds == 0:
+        print(f"Error: --{arg_name} invalido: '{value}'", file=sys.stderr)
+        sys.exit(1)
+    return seconds // 60 if unit == "minutes" else seconds
 
 
 def main() -> None:
@@ -114,14 +163,18 @@ def main() -> None:
     url_start_time = 0
     if url:
         url, url_start_time = parse_start_time(url)
-    start_time = args.start_time if args.start_time else url_start_time
+    cli_start_time = _parse_time_arg(args.start_time, "start-time")
+    start_time = cli_start_time or url_start_time
+
+    max_minutes = _parse_time_arg(args.max_minutes, "max-minutes", unit="minutes")
+    segment_duration = _parse_time_arg(args.segment_duration, "segment-duration")
 
     try:
         config = Config(
             url=url,
             source_lang=args.source_lang,
             target_lang=args.target_lang,
-            segment_duration=args.segment_duration,
+            segment_duration=segment_duration,
             whisper_model=args.whisper_model,
             gpt_model=args.gpt_model,
             cookies_browser=args.cookies_browser,
@@ -129,9 +182,13 @@ def main() -> None:
             diarize=args.diarize,
             batch_vod=args.batch_vod,
             benchmark=args.benchmark,
+            benchmark_no_translate=args.benchmark_no_translate,
+            benchmark_translators=args.benchmark_translators,
+            benchmark_e2e=args.benchmark_e2e,
+            fill_gaps=args.fill_gaps,
             vad_aggressiveness=args.vad_aggressiveness,
             start_time=start_time,
-            max_minutes=args.max_minutes,
+            max_minutes=max_minutes,
             no_cache=args.no_cache,
             speaker_gender=args.speaker_gender,
             speakers=args.speakers,
