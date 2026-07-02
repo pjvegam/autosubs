@@ -930,15 +930,21 @@ async def _run_mpv_pipeline(
         config.url,
     )
 
-    # Video local: necesario para seek, opcional como cache
+    # Video local: necesario para seek, opcional como cache.
+    # video_cached marca si el archivo esta COMPLETO y se puede leer de forma
+    # segura. Una descarga en background no cuenta: yt-dlp esta escribiendo
+    # (o reiniciando) el .mkv y leerlo daria 0 chunks o datos corruptos.
     cached_video: Path | None = None
+    video_cached = False
     if not live and video_id:
         cached_video = LOGS_DIR / f"{video_id}.mkv"
         if cached_video.exists():
             logger.info("Video encontrado en cache: %s", cached_video.name)
+            video_cached = True
         elif vod_start > 0:
             logger.info("Descargando video para seek a %ds...", vod_start)
             await download_vod(config.url, str(cached_video))
+            video_cached = True
         else:
             logger.info("Descargando VOD a cache en background: %s", cached_video.name)
             bg_download = asyncio.create_task(
@@ -963,9 +969,10 @@ async def _run_mpv_pipeline(
 
     pcm_callback = diarizer.push_pcm if diarizer else None
 
-    # Audio: archivo local para seek confiable, URL solo para streaming
+    # Audio: archivo local solo si esta COMPLETO; si hay descarga en background
+    # ffmpeg lee del stream (la URL) para no chocar con yt-dlp escribiendo el .mkv
     audio_source = ffmpeg_audio_url
-    if cached_video is not None and cached_video.exists():
+    if video_cached:
         audio_source = str(cached_video)
 
     segmenter = AudioSegmenter(
@@ -983,7 +990,7 @@ async def _run_mpv_pipeline(
     transcriber = _transcribe_worker if live or local_model else _transcribe_worker_parallel
 
     try:
-        use_local = cached_video is not None and cached_video.exists() and vod_start > 0
+        use_local = video_cached and vod_start > 0
         if use_local:
             await player.start(str(cached_video))
         else:
