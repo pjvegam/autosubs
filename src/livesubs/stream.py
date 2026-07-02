@@ -94,6 +94,11 @@ def parse_start_time(url: str) -> tuple[str, int]:
 
 _cookies_browser: str = ""
 
+# El player_client por defecto que elige yt-dlp ('tv') sirve URLs que YouTube
+# rechaza con HTTP 403 al descargar. 'web_safari' evita el bloqueo y respeta
+# las cookies del browser (ios/tv_simply no soportan cookies).
+_PLAYER_CLIENT = "web_safari"
+
 
 def set_cookies_browser(browser: str) -> None:
     """Configura el browser para --cookies-from-browser de yt-dlp."""
@@ -103,7 +108,7 @@ def set_cookies_browser(browser: str) -> None:
 
 def build_ytdl_raw_options() -> str:
     """Construye string de opciones para --ytdl-raw-options de MPV."""
-    parts: list[str] = []
+    parts: list[str] = [f"extractor-args=youtube:player_client={_PLAYER_CLIENT}"]
     if _cookies_browser:
         parts.append(f"cookies-from-browser={_cookies_browser}")
     if deno_path := _find_deno():
@@ -113,7 +118,11 @@ def build_ytdl_raw_options() -> str:
 
 def _ytdlp_base_args() -> list[str]:
     """Argumentos base para yt-dlp, incluyendo cookies y deno si existen."""
-    args = ["yt-dlp", "--remote-components", "ejs:github"]
+    args = [
+        "yt-dlp",
+        "--remote-components", "ejs:github",
+        "--extractor-args", f"youtube:player_client={_PLAYER_CLIENT}",
+    ]
     if deno_path := _find_deno():
         args.extend(["--js-runtimes", f"deno:{deno_path}"])
     if _cookies_browser:

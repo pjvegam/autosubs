@@ -429,9 +429,12 @@ class TestTranslateWorker:
 
 
 class TestGetStreamContext:
-    def _make_client_config(self):
+    def _make_client_config(self, **kwargs):
         client = AsyncMock()
-        config = _make_config()
+        # no_cache por defecto: estos tests prueban la traduccion, no el cache
+        # del titulo (que tocaria el FS). Los tests de cache lo activan aparte.
+        kwargs.setdefault("no_cache", True)
+        config = _make_config(**kwargs)
         return client, config
 
     async def test_returns_live_and_context(self):
@@ -527,6 +530,38 @@ class TestGetStreamContext:
 
         mock_translate.assert_not_called()
         assert "Titulo" not in context
+
+    async def test_sanitizes_degenerate_title_translation(self):
+        client, config = self._make_client_config()
+        info = {"is_live": True, "title": "テスト", "channel": "Ch"}
+        # Traduccion degenerada: '!' repetido contaminaria el contexto.
+        mock_translate = AsyncMock(return_value="Hola" + "!" * 100)
+        with (
+            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("livesubs.pipeline.translate_text", mock_translate),
+        ):
+            _, context, _ = await _get_stream_context("https://example.com", client, config)
+
+        assert "!!!!" not in context
+        assert "Hola!!! " in context or "Hola!!!)" in context
+        assert len(context) < 200
+
+    async def test_caches_title_translation(self, tmp_path):
+        client, config = self._make_client_config(no_cache=False)
+        info = {"is_live": True, "id": "vid789", "title": "テスト", "channel": "Ch"}
+        mock_translate = AsyncMock(return_value="Test")
+        with (
+            patch("livesubs.pipeline.LOGS_DIR", tmp_path),
+            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("livesubs.pipeline.translate_text", mock_translate),
+        ):
+            _, ctx1, _ = await _get_stream_context("https://example.com", client, config)
+            _, ctx2, _ = await _get_stream_context("https://example.com", client, config)
+
+        # Segunda llamada usa el cache: no re-traduce.
+        mock_translate.assert_called_once()
+        assert "テスト (Test)" in ctx1
+        assert "テスト (Test)" in ctx2
 
 
 class TestSubtitleWriter:

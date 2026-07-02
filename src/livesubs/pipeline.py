@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
+import json
 import logging
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -119,6 +121,47 @@ async def _load_local_whisper(model_size: str) -> LocalWhisperModel:
     return await asyncio.to_thread(LocalWhisperModel, model_size)
 
 
+# El titulo traducido va en el system prompt de CADA subtitulo. Una traduccion
+# degenerada (p.ej. '!' repetido 100 veces) contaminaria ese contexto y dispara
+# el consumo de tokens durante todo el stream. Por eso se sanitiza y se trunca.
+_MAX_TITLE_TRANSLATION = 200
+
+
+def _sanitize_title(text: str) -> str:
+    """Colapsa runs de 4+ repeticiones y trunca a un largo razonable."""
+    collapsed = re.sub(r"(.)\1{3,}", r"\1\1\1", text).strip()
+    return collapsed[:_MAX_TITLE_TRANSLATION].rstrip()
+
+
+def _load_cached_title(video_id: str, original: str, target_lang: str) -> str | None:
+    """Lee la traduccion del titulo cacheada si coincide original e idioma."""
+    if not video_id:
+        return None
+    path = LOGS_DIR / f"{video_id}.title.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if data.get("original") == original and data.get("target") == target_lang:
+        return data.get("translated") or None
+    return None
+
+
+def _save_cached_title(
+    video_id: str, original: str, target_lang: str, translated: str,
+) -> None:
+    """Persiste la traduccion del titulo para no re-traducir en re-ejecuciones."""
+    if not video_id:
+        return
+    payload = {"original": original, "target": target_lang, "translated": translated}
+    with contextlib.suppress(OSError):
+        (LOGS_DIR / f"{video_id}.title.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8",
+        )
+
+
 async def _get_stream_context(
     url: str, client: AsyncOpenAI, config: Config,
     tracker: CostTracker | None = None,
@@ -135,10 +178,22 @@ async def _get_stream_context(
         channel = info.get("channel", "") or info.get("uploader", "")
 
         if title:
-            translated_title = await translate_text(
-                client, title, config.source_lang, config.target_lang,
-                config.gpt_model, tracker=tracker,
+            use_cache = not config.no_cache
+            translated_title = (
+                _load_cached_title(video_id, title, config.target_lang)
+                if use_cache else None
             )
+            if translated_title is None:
+                raw = await translate_text(
+                    client, title, config.source_lang, config.target_lang,
+                    config.gpt_model, tracker=tracker,
+                )
+                if raw:
+                    translated_title = _sanitize_title(raw)
+                    if use_cache:
+                        _save_cached_title(
+                            video_id, title, config.target_lang, translated_title,
+                        )
             if translated_title:
                 title = f"{title} ({translated_title})"
 
