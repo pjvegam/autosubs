@@ -3,7 +3,7 @@
 > Subtítulos traducidos en tiempo real para YouTube. Multi-provider ASR + LLM translation con fallback automático, circuit breaker, cache incremental y recuperación de transcripciones perdidas.
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
-[![Tests 211 passing](https://img.shields.io/badge/tests-211%20passing-brightgreen.svg)](#tests)
+[![Tests 213 passing](https://img.shields.io/badge/tests-213%20passing-brightgreen.svg)](#tests)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Style: ruff](https://img.shields.io/badge/style-ruff-orange.svg)](https://github.com/astral-sh/ruff)
 
@@ -134,7 +134,7 @@ uv run livesubs "URL" --gpt-model deepseek/deepseek-chat       # traductor barat
 | Audio I/O | `ffmpeg` (subprocess), WebRTC VAD | Chunking inteligente por silencio |
 | Player | MPV via IPC (JSON-RPC sobre named pipe) | Subtítulos live update |
 | Stream | `yt-dlp` (subprocess) | Auth con cookies del browser |
-| Tests | `pytest` + `pytest-asyncio` (211 tests) | Mocks de APIs externas |
+| Tests | `pytest` + `pytest-asyncio` (213 tests) | Mocks de APIs externas |
 | Linting | `ruff` (`E`, `W`, `F`, `I`, `N`, `UP`, `B`, `SIM`, `ASYNC`, `S`, `RUF`) | Strict mode |
 
 ## Decisiones arquitectónicas destacadas
@@ -213,7 +213,7 @@ Validado en:
 ## Tests
 
 ```bash
-uv run pytest tests/ -q                  # 211 tests passing
+uv run pytest tests/ -q                  # 213 tests passing
 uv run ruff check src/                   # 0 issues
 ```
 
@@ -233,7 +233,7 @@ livesubs/
 │   ├── player.py          # MPV IPC (named pipe, JSON-RPC)
 │   ├── costs.py           # tracking + pricing por modelo
 │   └── config.py          # pydantic-like Config con defaults inteligentes
-├── tests/                 # 211 tests, mocks de APIs externas
+├── tests/                 # 213 tests, mocks de APIs externas
 └── docs/                  # benchmarks, decisiones, pricing, hardware
 ```
 
