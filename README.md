@@ -1,144 +1,251 @@
-# livesubs
+# LiveSubs
 
-Subtitulos traducidos en tiempo real para videos y streams de YouTube.
+> Subtítulos traducidos en tiempo real para YouTube. Multi-provider ASR + LLM translation con fallback automático, circuit breaker, cache incremental y recuperación de transcripciones perdidas.
 
-Transcribe el audio con Whisper y lo traduce con GPT. Los subtitulos aparecen directamente en MPV mientras ves el video.
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![Tests 211 passing](https://img.shields.io/badge/tests-211%20passing-brightgreen.svg)](#tests)
+[![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Style: ruff](https://img.shields.io/badge/style-ruff-orange.svg)](https://github.com/astral-sh/ruff)
 
-## Que necesitas
+## ¿Qué hace?
 
-- [Python 3.13+](https://www.python.org/downloads/)
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) (gestor de paquetes)
-- [ffmpeg](https://ffmpeg.org/download.html) (en PATH)
-- [mpv](https://mpv.io/installation/) (en PATH)
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) (en PATH)
-- Una API key de [OpenAI](https://platform.openai.com/api-keys)
+Mientras mirás un stream de YouTube en MPV, **LiveSubs transcribe el audio, lo traduce, y te muestra subtítulos en tu idioma** — todo en vivo. Pensado para consumir contenido de creadores en otros idiomas (en mi caso, streamers japoneses) sin esperar a que alguien los traduzca.
 
-## Instalacion
+```
+┌──────────┐    ┌──────┐    ┌─────┐    ┌────────────┐    ┌─────┐    ┌─────┐
+│ YouTube  │───▶│yt-dlp│───▶│ VAD │───▶│ ASR (chunk)│───▶│ LLM │───▶│ SRT │──▶ MPV
+│ stream   │    │  +   │    │     │    │            │    │     │    │     │
+└──────────┘    │ffmpeg│    │WebRTC│   │ Gemini Pro │    │Claude│   │live │
+                └──────┘    └─────┘    │ o gpt-4o-* │    │Haiku │   │write│
+                                       │ o local    │    │o GPT │   └─────┘
+                                       └────────────┘    └─────┘
+```
+
+## Por qué importa (lo que muestro acá)
+
+Este proyecto **no es un wrapper de Whisper**. Es un sistema que aprendí a hacer **robusto, barato y mantenible** después de chocar con problemas reales:
+
+- 🔁 **Multi-provider con fallback automático**: cuando Gemini Pro tira `503 high demand`, el pipeline cambia transparentemente a `gpt-4o-transcribe` sin perder chunks
+- 🚦 **Circuit breaker**: 5 fallos consecutivos = saca a Gemini de juego por 5min (evita ~21s de retries por chunk)
+- 💾 **Cache incremental de SRT**: si interrumpís, la próxima corrida continúa exacto donde quedó
+- 🔧 **Recuperación de gaps** (`--fill-gaps`): si Gemini perdió chunks durante un outage, re-transcribe los gaps del video local con gpt-4o (estable)
+- 💰 **Cost engineering**: ~$0.18-$0.43 por stream de 2h según setup. Documentado con [benchmarks reales](docs/)
+- 📊 **Decisiones documentadas**: cada elección de modelo está justificada con [datos](docs/transcription-benchmark-2026-04.md), no marketing
+- ⚙️ **Backends intercambiables**: 6 ASR (Gemini Pro/Flash, gpt-4o-transcribe, faster-whisper turbo/large-v3, Cohere Transcribe local) y 4+ LLM translators via OpenRouter
+
+## Requisitos del sistema
+
+Además de Python 3.13+ y [uv](https://docs.astral.sh/uv/), necesitás estos binarios nativos instalados (no vienen por pip):
+
+| Binario | Para qué | Obligatorio |
+|---------|----------|-------------|
+| **ffmpeg** | Procesamiento de audio (chunking + EQ de transcripción) | Sí |
+| **mpv** | Reproductor donde se muestran los subtítulos | Sí |
+| **deno** | yt-dlp lo usa para resolver los JS challenges de YouTube | Recomendado |
+
+`yt-dlp` se instala solo como dependencia de Python con `uv sync` — no requiere instalación aparte.
 
 ```bash
-git clone <repo>
+# Windows (winget)  —  yt-dlp.FFmpeg trae los builds de ffmpeg parcheados para yt-dlp
+winget install yt-dlp.FFmpeg shinchiro.mpv DenoLand.Deno
+
+# macOS (Homebrew)
+brew install ffmpeg mpv deno
+
+# Linux (Debian/Ubuntu)
+sudo apt install ffmpeg mpv
+curl -fsSL https://deno.land/install.sh | sh   # deno
+```
+
+> **Mantené yt-dlp actualizado**: YouTube cambia seguido y rompe la extracción; tener yt-dlp al día es vital. Si algo deja de funcionar, actualizá con `uv sync --upgrade-package yt-dlp`.
+
+## Quickstart
+
+```bash
+git clone https://github.com/pjvegam/livesubs.git
 cd livesubs
-uv sync
-```
+uv sync --extra gemini  # opcional: añade soporte Gemini
 
-Crea un archivo `.env` en la carpeta del proyecto:
+# Crear .env con tu API key
+echo "OPENAI_API_KEY=sk-..." > .env
 
-```
-OPENAI_API_KEY=sk-tu-api-key-aqui
-```
-
-## Uso
-
-```bash
-# Asi de simple
+# Mirar un stream japonés con subs en español (default)
 uv run livesubs "https://www.youtube.com/watch?v=..."
 ```
 
-Por default traduce de japones a espanol. Para cambiar idiomas edita el `.env`:
+## Setup recomendado (mejor calidad/precio)
 
-```
+```env
 OPENAI_API_KEY=sk-...
-LIVESUBS_SOURCE_LANG=en
+GEMINI_API_KEY=...                                  # Setup A: ASR
+OPENROUTER_API_KEY=sk-or-v1-...                     # Setup A: traducción
+LIVESUBS_WHISPER_MODEL=gemini-2.5-pro
+LIVESUBS_GPT_MODEL=anthropic/claude-haiku-4.5
+LIVESUBS_SOURCE_LANG=ja
 LIVESUBS_TARGET_LANG=es
 ```
 
-O usa flags:
+**Costo estimado**: ~$0.43 por stream de 2h (con fallback a gpt-4o cuando Gemini falla).
 
+Ver [docs/pricing-reference-2026-04.md](docs/pricing-reference-2026-04.md) para alternativas.
+
+## Modos de uso
+
+### Stream en vivo / VOD de YouTube
 ```bash
-uv run livesubs "https://www.youtube.com/watch?v=..." --source-lang en --target-lang es
+uv run livesubs "https://www.youtube.com/watch?v=XXXXXX"
 ```
 
-Tambien puedes traducir el audio del sistema (lo que suena en la PC):
-
+### Empezar desde un punto específico
 ```bash
-# Traduce cualquier audio que salga de la computadora (juegos, Discord, otros sitios, etc.)
-uv run livesubs --system-audio
-
-# Con idiomas especificos
-uv run livesubs --system-audio --source-lang en --target-lang es
+uv run livesubs "URL" --start-time 1h30m     # también acepta 5400, 1:30:00, 90m
 ```
 
-## Diarizacion (experimental)
-
-Identifica quien habla y etiqueta los subtitulos por speaker. Requiere GPU NVIDIA y Python 3.12 (NeMo no soporta 3.13 aun):
-
+### Limitar duración a traducir
 ```bash
-# Instalar dependencias de diarizacion
-uv sync --python 3.12 --extra diarize
-
-# Usar con cualquier modo
-uv run --python 3.12 --extra diarize livesubs "https://www.youtube.com/watch?v=..." --diarize
-
-# Con overlay
-uv run --python 3.12 --extra diarize livesubs "https://www.youtube.com/watch?v=..." --subs-only --diarize
-
-# Con audio del sistema
-uv run --python 3.12 --extra diarize livesubs --system-audio --diarize
+uv run livesubs "URL" --max-minutes 30        # o 30m, 0:30:00
 ```
 
-## Opciones
-
-Todo se puede configurar en `.env` o con flags (los flags tienen prioridad):
-
-### Configuracion general
-
-| `.env` | Flag | Default | Que hace |
-|---|---|---|---|
-| `OPENAI_API_KEY` | - | (requerido) | API key de OpenAI |
-| `LIVESUBS_SOURCE_LANG` | `--source-lang` | `ja` | Idioma del audio |
-| `LIVESUBS_TARGET_LANG` | `--target-lang` | `es` | Idioma de los subtitulos |
-| `LIVESUBS_WHISPER_MODEL` | `--whisper-model` | `gpt-4o-transcribe` | Modelo de transcripcion |
-| `LIVESUBS_GPT_MODEL` | `--gpt-model` | `gpt-4.1` | Modelo de traduccion |
-| `LIVESUBS_COOKIES_BROWSER` | `--cookies-browser` | `firefox` | Browser para cookies de yt-dlp. `none` para desactivar |
-
-### Modos de operacion
-
-| Flag | Que hace |
-|---|---|
-| `--system-audio` | Captura audio del sistema (loopback WASAPI, solo Windows) |
-| `--batch-vod` | Pre-procesa VOD completo con whisper-1 + verbose_json (chunks de 20min). Mejor timestamps pero peor calidad en habla casual. Ver [Benchmark](#benchmark) |
-| `--benchmark` | Compara gpt-4o-transcribe vs whisper-1 sobre 20min del mismo audio. Genera un .md en `livesubs_logs/`. Ver [Benchmark](#benchmark) |
-| `--diarize` | Activar diarizacion de speakers (requiere `livesubs[diarize]`) |
-
-### Ajustes de audio y traduccion
-
-| `.env` | Flag | Default | Que hace |
-|---|---|---|---|
-| `LIVESUBS_SEGMENT_DURATION` | `--segment-duration` | `5` | Duracion objetivo de cada chunk de audio (segundos) |
-| `LIVESUBS_VAD_AGGRESSIVENESS` | `--vad-aggressiveness` | `2` | Agresividad del VAD 0-3. Mas alto = mas agresivo filtrando silencio |
-| - | `--start-time` | `0` | Tiempo de inicio en segundos (override sobre `?t=` en URL) |
-| - | `--max-minutes` | `0` | Limite de minutos a traducir (0 = sin limite) |
-| - | `--no-cache` | - | Forzar re-traduccion aunque exista SRT en cache |
-| - | `--speaker-gender` | - | Genero del hablante principal (`f`/`m`) para consistencia gramatical |
-| - | `--speakers` | `0` | Numero de speakers en el video (da contexto a GPT) |
-| - | `--verbose` | - | Muestra logs de debug |
-
-## Benchmark
-
-El modo `--benchmark` compara los dos pipelines de transcripcion sobre el mismo audio:
-
-- **Path A** (default): `gpt-4o-transcribe` + VAD ~5s — transcribe muchos chunks cortos
-- **Path B** (batch-vod): `whisper-1` + `verbose_json` — transcribe 20min de golpe
-
+### Audio del sistema (cualquier audio que salga de tu PC)
 ```bash
-# Extrae 20min desde el minuto 5 (default) y compara ambos pipelines
-uv run livesubs "https://www.youtube.com/watch?v=..." --benchmark
-
-# Empezar desde otro punto
-uv run livesubs "https://www.youtube.com/watch?v=..." --benchmark --start-time 600
+uv run livesubs --system-audio                # juegos, Discord, otros sitios
 ```
 
-Genera un `.md` en `livesubs_logs/` con metricas (costo, alucinaciones, segmentos) y muestras lado a lado cada 2 minutos.
+### Recuperar transcripciones perdidas
+Si Gemini tuvo outage durante una sesión y perdiste chunks:
+```bash
+uv run livesubs "URL" --fill-gaps             # usa video local + gpt-4o-transcribe
+```
 
-**Resultado del primer benchmark** (conversacion casual japonesa, 20min):
+### Forzar provider específico
+```bash
+uv run livesubs "URL" --whisper-model gpt-4o-transcribe        # ASR sólido garantizado
+uv run livesubs "URL" --gpt-model deepseek/deepseek-chat       # traductor barato
+```
 
-| Metrica | gpt-4o-transcribe | whisper-1 |
-|---|---|---|
-| Subtitulos | 191 | 481 |
-| Alucinaciones | 0 | 3 |
-| Segmentos cortos | 3 | 31 |
-| Costo total | $0.18 | $0.25 |
+## Stack técnico
 
-gpt-4o-transcribe captura frases completas con contexto mientras whisper-1 fragmenta en trozos cortos. El pipeline default (Path A) es mas barato y de mejor calidad para habla casual. `--batch-vod` podria ser util para contenido mas estructurado (conferencias, noticias) donde los timestamps precisos por frase importan.
+| Capa | Tecnología | Por qué |
+|------|-----------|---------|
+| Async runtime | `asyncio` + `TaskGroup` | I/O-bound pipeline con multiple workers |
+| ASR APIs | OpenAI, Google AI (Gemini), HuggingFace | Multi-provider con [benchmarks](docs/transcription-benchmark-2026-04.md) |
+| ASR local | `faster-whisper` + CTranslate2 (CUDA) | Backup gratis cuando no querés gastar API |
+| LLM translator | OpenAI, Anthropic, OpenRouter (DeepSeek/Kimi/Gemini) | [Comparados](docs/translation-benchmark-2026-04.md) |
+| Audio I/O | `ffmpeg` (subprocess), WebRTC VAD | Chunking inteligente por silencio |
+| Player | MPV via IPC (JSON-RPC sobre named pipe) | Subtítulos live update |
+| Stream | `yt-dlp` (subprocess) | Auth con cookies del browser |
+| Tests | `pytest` + `pytest-asyncio` (211 tests) | Mocks de APIs externas |
+| Linting | `ruff` (`E`, `W`, `F`, `I`, `N`, `UP`, `B`, `SIM`, `ASYNC`, `S`, `RUF`) | Strict mode |
 
-Costo estimado de un benchmark: ~$0.40-0.50 por 20 minutos de audio.
+## Decisiones arquitectónicas destacadas
+
+(detalle completo en [`docs/decisions.md`](docs/decisions.md))
+
+| Decisión | Por qué |
+|---------|---------|
+| Setup A (Gemini Pro + Claude Haiku) como default | Mejor calidad-precio en benchmark vs gpt-4o + gpt-4.1 |
+| Cache de SRT incremental con `append=True` | Si interrumpís, continuás exacto donde quedó. Sin SRTs incompletos pretendiendo ser completos |
+| Routing por nombre de modelo (`/` → OpenRouter) | 1 cliente OpenAI-compatible cubre 4+ providers sin SDKs separados |
+| Circuit breaker sobre fallback simple | Outages persistentes saturaban retries; ahora skipea Gemini por 5min después de 5 fails |
+| Subprocess isolation para ctranslate2 | CUDA cleanup en Windows abortaba el proceso. `os._exit(0)` + subprocess lo evita |
+
+## Benchmarks
+
+Resultados de testing real, no marketing:
+
+- **[Transcripción](docs/transcription-benchmark-2026-04.md)** — 6 modelos comparados (Gemini Pro/Flash, gpt-4o, faster-whisper turbo/large-v3, Cohere). Spot-checks por timestamp + métricas de cobertura, alucinaciones, costo.
+- **[Traducción](docs/translation-benchmark-2026-04.md)** — 4 LLMs (gpt-4.1, DeepSeek V3, Kimi K2, Claude Haiku 4.5). Detección de errores culturales (ej: DeepSeek confunde `ジム`/gym con "Jim") y consistencia de speaker.
+- **[E2E](docs/e2e-benchmark-2026-04.md)** — Gemini 2.5 Pro audio→ES en single call vs pipeline modular.
+- **[Modelos rechazados](docs/models-rejected.md)** — qué probé y por qué no quedó (kotoba-whisper out-of-domain, MiMo/Parakeet sin japonés, etc.)
+
+## Limitaciones conocidas del benchmark
+
+El benchmark de transcripción usa Claude como evaluador **sin ground truth**, es decir, sin una transcripción manual verificada como referencia. Esto significa que lo que se está midiendo es **coherencia y fluidez del output**, no accuracy absoluta.
+
+**Lo que sí detecta:**
+
+- Alucinaciones evidentes (texto inventado)
+- Cambios de idioma en modelos multilingües
+- Errores estructurales obvios (nombres propios en nonsense, timestamps rotos)
+
+**Lo que NO detecta:**
+
+- Palabras mal transcritas que suenan plausibles en el contexto
+- Contenido que el modelo silenció sin decir "no entendí"
+- Errores en números, fechas o nombres propios ambiguos
+
+El benchmark de traducción es más confiable porque compara bilateralmente fuente (transcripción) y target (traducción), lo que sí permite detectar inconsistencias semánticas.
+
+**Mejora pendiente para v2**: usar como referencia un video con transcripción oficial verificada (charla académica, keynote con subtítulos manuales) y comparar los outputs de cada backend con métrica objetiva (Word Error Rate).
+
+## Cost engineering
+
+| Setup | $/2h stream | CLP/hora | Calidad |
+|-------|-------------|----------|---------|
+| Local (turbo) + gpt-4.1 | $0.36 | 180 | Media (22% outros en gameplay silencioso) |
+| **Setup A** (Gemini Pro + Claude Haiku) ⭐ | $0.43 | 215 | Alta confirmada |
+| gpt-4o-transcribe + Claude Haiku | $0.97 | 485 | Alta |
+| Premium (gpt-4o-transcribe + gpt-4.1) | $1.08 | 540 | Alta |
+
+Para 60h streaming/mes (~2h/día): **$13/mes en Setup A**.
+
+## Configuración completa
+
+Ver `.env.example` y output de `uv run livesubs --help` para todas las opciones (~25 flags).
+
+Variables principales:
+
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | (requerida) | Para fallback ASR y traducciones gpt-* |
+| `GEMINI_API_KEY` | (opcional) | Activa Setup A ASR |
+| `OPENROUTER_API_KEY` | (opcional) | Activa Setup A traducción (Claude Haiku, DeepSeek, Kimi, etc.) |
+| `HF_TOKEN` | (opcional) | Para Cohere Transcribe (modelo gated) |
+| `LIVESUBS_WHISPER_MODEL` | auto-detect | `gemini-2.5-pro`, `gpt-4o-transcribe`, `local-turbo`, `local-v3` |
+| `LIVESUBS_GPT_MODEL` | auto-detect | `gpt-4.1`, `anthropic/claude-haiku-4.5`, `deepseek/deepseek-chat`, etc. |
+
+## Hardware
+
+Validado en:
+- **RTX 5060 Blackwell sm_120** (8GB VRAM) — requiere PyTorch nightly cu128 (ver [`docs/hardware.md`](docs/hardware.md))
+- Windows 11 + WSL no testeado pero debería funcionar
+
+## Tests
+
+```bash
+uv run pytest tests/ -q                  # 211 tests passing
+uv run ruff check src/                   # 0 issues
+```
+
+## Estructura del repositorio
+
+```
+livesubs/
+├── src/livesubs/
+│   ├── pipeline.py        # orquestación async (TaskGroup workers)
+│   ├── transcribe.py      # ASR routing: OpenAI / Gemini / faster-whisper
+│   ├── translate.py       # LLM translation con context window
+│   ├── recover.py         # --fill-gaps: re-transcribe gaps del SRT
+│   ├── benchmark.py       # ASR + translator + E2E benchmarks
+│   ├── stream.py          # yt-dlp wrapper, parse_time_value
+│   ├── audio.py           # ffmpeg + VAD chunking
+│   ├── subtitles.py       # SRT cache append mode
+│   ├── player.py          # MPV IPC (named pipe, JSON-RPC)
+│   ├── costs.py           # tracking + pricing por modelo
+│   └── config.py          # pydantic-like Config con defaults inteligentes
+├── tests/                 # 211 tests, mocks de APIs externas
+└── docs/                  # benchmarks, decisiones, pricing, hardware
+```
+
+## Roadmap
+
+Cosas que tengo en backlog pero todavía no resuelvan los datos como problema:
+
+- [ ] Validar Cohere Transcribe en modo chunked (5-8s) — pendiente porque benchmark batch fue prometedor pero no comparable a producción
+- [ ] Soporte de prompt caching de Anthropic para reducir ~10% costo de traducción
+- [ ] Streaming partial transcription (Gemini soporta SSE en algunos modelos)
+- [ ] Dockerfile para reproducibilidad (con/sin GPU)
+
+## Licencia
+
+MIT.

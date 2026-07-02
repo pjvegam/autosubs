@@ -2,6 +2,11 @@
 name = "livesubs"
 version = "0.1.0"
 description = "Subtitulos traducidos en vivo para YouTube"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "pjvegam" }]
+keywords = ["subtitles", "translation", "whisper", "youtube", "asr", "yt-dlp"]
 requires-python = ">=3.12"
 dependencies = [
     "audioop-lts>=0.2.2; python_version >= '3.13'",
@@ -9,6 +14,7 @@ dependencies = [
     "pyaudiowpatch>=0.2.12.8",
     "python-dotenv>=1.2.1",
     "webrtcvad-wheels>=2.0.14",
+    "yt-dlp>=2026.6.9",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +25,11 @@ cohere-asr = ["transformers>=4.46", "librosa>=0.10", "accelerate>=0.30"]
 
 [project.scripts]
 livesubs = "livesubs.main:main"
+
+[project.urls]
+Homepage = "https://github.com/pjvegam/livesubs"
+Repository = "https://github.com/pjvegam/livesubs"
+Issues = "https://github.com/pjvegam/livesubs/issues"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
