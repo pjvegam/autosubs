@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from livesubs.costs import CostTracker
-from livesubs.translate import (
+from autosubs.costs import CostTracker
+from autosubs.translate import (
     _ROLE,
     _RULES,
     SYSTEM_PROMPT,
@@ -66,7 +66,7 @@ class TestTranslateText:
             _mock_completion("texto recuperado"),
         ]
 
-        with patch("livesubs.retry.BASE_DELAY", 0.01):
+        with patch("autosubs.retry.BASE_DELAY", 0.01):
             result = await translate_text(client, "テスト", "ja", "es")
         assert result == "texto recuperado"
 
@@ -74,7 +74,7 @@ class TestTranslateText:
         client = AsyncMock()
         client.chat.completions.create.side_effect = RuntimeError("API error")
 
-        with patch("livesubs.retry.BASE_DELAY", 0.01):
+        with patch("autosubs.retry.BASE_DELAY", 0.01):
             result = await translate_text(client, "テスト", "ja", "es")
         assert result is None
 

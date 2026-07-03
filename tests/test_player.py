@@ -1,7 +1,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from livesubs.player import MPVPlayer
+from autosubs.player import MPVPlayer
 
 
 class TestMPVPlayerInit:
@@ -44,7 +44,7 @@ class TestMPVPlayerStart:
         player = MPVPlayer(r"\\.\pipe\mpvsocket")
         mock_popen = MagicMock()
 
-        with patch("livesubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        with patch("autosubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.return_value = mock_popen
             await player.start("https://video.url")
 
@@ -60,7 +60,7 @@ class TestMPVPlayerStart:
     async def test_includes_audio_file_when_provided(self):
         player = MPVPlayer("pipe")
 
-        with patch("livesubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        with patch("autosubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.return_value = MagicMock()
             await player.start("https://video.url", audio_url="https://audio.url")
 
@@ -79,7 +79,7 @@ class TestMPVPlayerSendCommand:
         pipe_mock.flush = MagicMock()
         player._pipe_handle = pipe_mock
 
-        with patch("livesubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        with patch("autosubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = lambda fn: fn()
             result = await player._send_command(["get_property", "time-pos"])
 
@@ -97,7 +97,7 @@ class TestMPVPlayerSendCommand:
         pipe_mock.flush = MagicMock()
         player._pipe_handle = pipe_mock
 
-        with patch("livesubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        with patch("autosubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = lambda fn: fn()
             result = await player._send_command(["sub-add", "/tmp/test.srt"])
 
@@ -150,7 +150,7 @@ class TestMPVPlayerClose:
         player.process = MagicMock()
         player.process.poll.return_value = None
 
-        with patch("livesubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        with patch("autosubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.return_value = None
             await player.close()
 

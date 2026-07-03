@@ -6,7 +6,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from livesubs.vad import AudioChunk, VadSegmenter
+from autosubs.vad import AudioChunk, VadSegmenter
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class AudioSegmenter:
 
     async def start_live(self, url: str) -> None:
         """Lanza yt-dlp → ffmpeg pipe para streams en vivo."""
-        from livesubs.stream import ytdlp_pipe_audio_cmd
+        from autosubs.stream import ytdlp_pipe_audio_cmd
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         ytdlp_cmd = ytdlp_pipe_audio_cmd(url)

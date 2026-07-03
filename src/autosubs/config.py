@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-LOGS_DIR = Path("livesubs_logs")
+LOGS_DIR = Path("autosubs_logs")
 YT_ID_RE = re.compile(r"(?:v=|youtu\.be/|/shorts/)([a-zA-Z0-9_-]{11})")
 
 
@@ -67,19 +67,19 @@ class Config:
     def __post_init__(self) -> None:
         load_dotenv()
         if not self.cookies_browser:
-            self.cookies_browser = os.environ.get("LIVESUBS_COOKIES_BROWSER", "firefox")
+            self.cookies_browser = os.environ.get("AUTOSUBS_COOKIES_BROWSER", "firefox")
         if self.cookies_browser.lower() == "none":
             self.cookies_browser = ""
         if not self.source_lang:
-            self.source_lang = os.environ.get("LIVESUBS_SOURCE_LANG", "ja")
+            self.source_lang = os.environ.get("AUTOSUBS_SOURCE_LANG", "ja")
         if not self.target_lang:
-            self.target_lang = os.environ.get("LIVESUBS_TARGET_LANG", "es")
+            self.target_lang = os.environ.get("AUTOSUBS_TARGET_LANG", "es")
         if not self.whisper_model:
             self.whisper_model = os.environ.get(
-                "LIVESUBS_WHISPER_MODEL", _default_whisper_model(),
+                "AUTOSUBS_WHISPER_MODEL", _default_whisper_model(),
             )
         if not self.segment_duration:
-            env_dur = os.environ.get("LIVESUBS_SEGMENT_DURATION", "")
+            env_dur = os.environ.get("AUTOSUBS_SEGMENT_DURATION", "")
             if env_dur:
                 self.segment_duration = int(env_dur)
             elif self.whisper_model.startswith("local-"):
@@ -87,12 +87,12 @@ class Config:
             else:
                 self.segment_duration = 5
         if not self.gpt_model:
-            self.gpt_model = os.environ.get("LIVESUBS_GPT_MODEL", _default_gpt_model())
+            self.gpt_model = os.environ.get("AUTOSUBS_GPT_MODEL", _default_gpt_model())
         if not self.diarize:
-            self.diarize = os.environ.get("LIVESUBS_DIARIZE", "").lower() in ("1", "true")
+            self.diarize = os.environ.get("AUTOSUBS_DIARIZE", "").lower() in ("1", "true")
         if self.vad_aggressiveness < 0:
             self.vad_aggressiveness = int(
-                os.environ.get("LIVESUBS_VAD_AGGRESSIVENESS", "2"),
+                os.environ.get("AUTOSUBS_VAD_AGGRESSIVENESS", "2"),
             )
         if not self.api_key:
             self.api_key = os.environ.get("OPENAI_API_KEY", "")

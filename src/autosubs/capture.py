@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pyaudiowpatch as pyaudio
 
-from livesubs.vad import AudioChunk, VadSegmenter
+from autosubs.vad import AudioChunk, VadSegmenter
 
 logger = logging.getLogger(__name__)
 

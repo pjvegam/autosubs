@@ -1,6 +1,6 @@
 
 
-from livesubs.retry import with_retries
+from autosubs.retry import with_retries
 
 
 class TestWithRetries:

@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
 
-from livesubs.retry import with_retries
+from autosubs.retry import with_retries
 
 if TYPE_CHECKING:
-    from livesubs.costs import CostTracker
+    from autosubs.costs import CostTracker
 
 logger = logging.getLogger(__name__)
 

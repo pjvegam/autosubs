@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from livesubs.overlay import SubtitleOverlay
+from autosubs.overlay import SubtitleOverlay
 
 
 class TestSubtitleOverlay:
@@ -29,7 +29,7 @@ class TestSubtitleOverlay:
         overlay._root = None
         assert overlay.is_running() is False
 
-    @patch("livesubs.overlay.tk.Tk")
+    @patch("autosubs.overlay.tk.Tk")
     def test_start_creates_window(self, mock_tk_class):
         mock_root = MagicMock()
         mock_root.winfo_screenwidth.return_value = 1920
@@ -47,7 +47,7 @@ class TestSubtitleOverlay:
 
         overlay.close()
 
-    @patch("livesubs.overlay.tk.Tk")
+    @patch("autosubs.overlay.tk.Tk")
     def test_update_text_calls_after(self, mock_tk_class):
         mock_root = MagicMock()
         mock_root.winfo_screenwidth.return_value = 1920
@@ -62,7 +62,7 @@ class TestSubtitleOverlay:
         mock_root.after.assert_called()
         overlay.close()
 
-    @patch("livesubs.overlay.tk.Tk")
+    @patch("autosubs.overlay.tk.Tk")
     def test_on_close_callback(self, mock_tk_class):
         mock_root = MagicMock()
         mock_root.winfo_screenwidth.return_value = 1920

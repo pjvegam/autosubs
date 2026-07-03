@@ -6,7 +6,7 @@ Cuando salga un modelo nuevo o querramos re-evaluar, estos son los tests que val
 
 ### Comando
 ```powershell
-uv run livesubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark --start-time 1h --benchmark-no-translate
+uv run autosubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark --start-time 1h --benchmark-no-translate
 ```
 
 (reusa el segmento de 20min cacheado, ahorra costo)
@@ -28,7 +28,7 @@ uv run livesubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark --star
 ### Test adicional para audio "difícil"
 Cuando un modelo gana en audio limpio, validar también con:
 ```powershell
-uv run livesubs "URL_RESIDENT_EVIL_GAMEPLAY" --benchmark --start-time XXX --benchmark-no-translate
+uv run autosubs "URL_RESIDENT_EVIL_GAMEPLAY" --benchmark --start-time XXX --benchmark-no-translate
 ```
 
 Audio con silencios largos / gameplay / música. Acá es donde turbo falla con outros.
@@ -37,7 +37,7 @@ Audio con silencios largos / gameplay / música. Acá es donde turbo falla con o
 
 ### Comando
 ```powershell
-uv run livesubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark-translators --start-time 1h
+uv run autosubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark-translators --start-time 1h
 ```
 
 (reusa transcripción cacheada de gpt-4o-transcribe, solo costo de traducción)
@@ -71,7 +71,7 @@ Mantener estos timestamps como tests fijos:
 
 ### Comando (TODO: implementar)
 ```powershell
-uv run livesubs "URL" --benchmark-e2e --start-time 1h
+uv run autosubs "URL" --benchmark-e2e --start-time 1h
 ```
 
 ### Plan

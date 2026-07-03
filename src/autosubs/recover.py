@@ -16,11 +16,11 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from livesubs.config import LOGS_DIR, YT_ID_RE, Config
-from livesubs.costs import CostTracker
-from livesubs.subtitles import _format_timestamp
-from livesubs.transcribe import transcribe_audio
-from livesubs.translate import translate_text
+from autosubs.config import LOGS_DIR, YT_ID_RE, Config
+from autosubs.costs import CostTracker
+from autosubs.subtitles import _format_timestamp
+from autosubs.transcribe import transcribe_audio
+from autosubs.translate import translate_text
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,7 @@ async def fill_gaps(config: Config) -> None:
     logger.info("Backup creado: %s", backup.name)
 
     # Clientes (importar el factory de pipeline)
-    from livesubs.pipeline import _create_translate_client
+    from autosubs.pipeline import _create_translate_client
     asr_client = AsyncOpenAI(api_key=config.api_key)
     translate_client = _create_translate_client(config.gpt_model, config.api_key)
     tracker = CostTracker(
@@ -224,7 +224,7 @@ async def fill_gaps(config: Config) -> None:
         target_lang=config.target_lang,
     )
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="livesubs_fillgaps_"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="autosubs_fillgaps_"))
     try:
         new_entries: list[SrtEntry] = []
         for i, (gs, ge) in enumerate(gaps, 1):

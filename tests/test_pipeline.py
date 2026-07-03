@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from livesubs.config import Config
-from livesubs.costs import CostTracker
-from livesubs.pipeline import (
+from autosubs.config import Config
+from autosubs.costs import CostTracker
+from autosubs.pipeline import (
     _get_stream_context,
     _monitor_mpv,
     _monitor_overlay,
@@ -16,7 +16,7 @@ from livesubs.pipeline import (
     _transcribe_worker_parallel,
     _translate_worker,
 )
-from livesubs.vad import AudioChunk
+from autosubs.vad import AudioChunk
 
 
 def _make_config(**kwargs) -> Config:
@@ -45,7 +45,7 @@ class TestTranscribeWorker:
 
         chunk = _make_chunk(duration=4.2)
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.return_value = "texto transcrito"
             with patch.object(Path, "unlink"):
                 await audio_queue.put(chunk)
@@ -65,7 +65,7 @@ class TestTranscribeWorker:
         audio_queue: asyncio.Queue = asyncio.Queue()
         text_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.return_value = None
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk())
@@ -83,7 +83,7 @@ class TestTranscribeWorker:
         audio_queue: asyncio.Queue = asyncio.Queue()
         text_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.side_effect = RuntimeError("boom")
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk())
@@ -101,7 +101,7 @@ class TestTranscribeWorker:
         audio_queue: asyncio.Queue = asyncio.Queue()
         text_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.side_effect = ["texto uno", "texto dos", "texto tres"]
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk(duration=4.2))
@@ -131,7 +131,7 @@ class TestTranscribeWorker:
         audio_queue: asyncio.Queue = asyncio.Queue()
         text_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.side_effect = ["texto uno", "texto dos"]
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk(duration=4.2))
@@ -152,7 +152,7 @@ class TestTranscribeWorker:
         audio_queue: asyncio.Queue = asyncio.Queue()
         text_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.return_value = None
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk(duration=5.0))
@@ -173,7 +173,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
             await text_queue.put((0, 4.5, "original"))
             await text_queue.put(None)
@@ -192,7 +192,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = None
             await text_queue.put((0, 5.0, "original"))
             await text_queue.put(None)
@@ -209,7 +209,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.side_effect = RuntimeError("boom")
             await text_queue.put((0, 5.0, "original"))
             await text_queue.put(None)
@@ -226,7 +226,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
             await text_queue.put((0, 4.5, "original"))
             await text_queue.put(None)
@@ -247,7 +247,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.side_effect = ["trad_1", "trad_2", "trad_3"]
             await text_queue.put((0, 3.0, "texto_1"))
             await text_queue.put((3.0, 3.0, "texto_2"))
@@ -272,7 +272,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.side_effect = ["t1", "t2", "t3", "t4", "t5"]
             for i in range(5):
                 await text_queue.put((i * 3.0, 3.0, f"texto_{i}"))
@@ -297,7 +297,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
             await text_queue.put((0, 4.5, "original"))
             await text_queue.put(None)
@@ -321,7 +321,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
             await text_queue.put((0, 4.5, "original"))
             await text_queue.put(None)
@@ -342,7 +342,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
             await text_queue.put((0, 4.5, "original"))
             await text_queue.put(None)
@@ -364,7 +364,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
             await text_queue.put((0, 4.5, "original"))
             await text_queue.put(None)
@@ -384,7 +384,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.side_effect = ["traducido_1", "traducido_2"]
             await text_queue.put((0, 4.5, "original_1"))
             await text_queue.put((4.5, 5.0, "original_2"))
@@ -411,7 +411,7 @@ class TestTranslateWorker:
         text_queue: asyncio.Queue = asyncio.Queue()
         translated_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
+        with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
             await text_queue.put((0, 4.5, "original"))
             await text_queue.put(None)
@@ -442,8 +442,8 @@ class TestGetStreamContext:
         info = {"is_live": True, "id": "abc123", "title": "Mi Stream", "channel": "TestChannel"}
         mock_translate = AsyncMock(return_value="My Stream")
         with (
-            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
-            patch("livesubs.pipeline.translate_text", mock_translate),
+            patch("autosubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("autosubs.pipeline.translate_text", mock_translate),
         ):
             result = await _get_stream_context("https://example.com", client, config)
             live, context, video_id = result
@@ -458,8 +458,8 @@ class TestGetStreamContext:
         info = {"is_live": False, "id": "vid456", "title": "Video", "channel": "Canal"}
         mock_translate = AsyncMock(return_value="Video translated")
         with (
-            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
-            patch("livesubs.pipeline.translate_text", mock_translate),
+            patch("autosubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("autosubs.pipeline.translate_text", mock_translate),
         ):
             result = await _get_stream_context("https://example.com", client, config)
             live, context, video_id = result
@@ -471,7 +471,7 @@ class TestGetStreamContext:
     async def test_falls_back_on_error(self):
         client, config = self._make_client_config()
         mock_info = AsyncMock(side_effect=RuntimeError("fail"))
-        with patch("livesubs.pipeline.get_stream_info", mock_info):
+        with patch("autosubs.pipeline.get_stream_info", mock_info):
             result = await _get_stream_context("https://example.com", client, config)
             live, context, video_id = result
 
@@ -484,8 +484,8 @@ class TestGetStreamContext:
         info = {"is_live": True, "title": "Stream", "uploader": "Uploader1"}
         mock_translate = AsyncMock(return_value="Stream translated")
         with (
-            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
-            patch("livesubs.pipeline.translate_text", mock_translate),
+            patch("autosubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("autosubs.pipeline.translate_text", mock_translate),
         ):
             _live, context, _ = await _get_stream_context("https://example.com", client, config)
 
@@ -496,8 +496,8 @@ class TestGetStreamContext:
         info = {"is_live": True, "title": "配信テスト", "channel": "TestCh"}
         mock_translate = AsyncMock(return_value="Stream Test")
         with (
-            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
-            patch("livesubs.pipeline.translate_text", mock_translate),
+            patch("autosubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("autosubs.pipeline.translate_text", mock_translate),
         ):
             _, context, _ = await _get_stream_context("https://example.com", client, config)
 
@@ -511,8 +511,8 @@ class TestGetStreamContext:
         client, config = self._make_client_config()
         info = {"is_live": False, "title": "配信テスト", "channel": "Ch"}
         with (
-            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
-            patch("livesubs.pipeline.translate_text", new_callable=AsyncMock, return_value=None),
+            patch("autosubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("autosubs.pipeline.translate_text", new_callable=AsyncMock, return_value=None),
         ):
             _, context, _ = await _get_stream_context("https://example.com", client, config)
 
@@ -523,8 +523,8 @@ class TestGetStreamContext:
         client, config = self._make_client_config()
         info = {"is_live": True, "title": "", "channel": "SomeChannel"}
         with (
-            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
-            patch("livesubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate,
+            patch("autosubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate,
         ):
             _, context, _ = await _get_stream_context("https://example.com", client, config)
 
@@ -537,8 +537,8 @@ class TestGetStreamContext:
         # Traduccion degenerada: '!' repetido contaminaria el contexto.
         mock_translate = AsyncMock(return_value="Hola" + "!" * 100)
         with (
-            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
-            patch("livesubs.pipeline.translate_text", mock_translate),
+            patch("autosubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("autosubs.pipeline.translate_text", mock_translate),
         ):
             _, context, _ = await _get_stream_context("https://example.com", client, config)
 
@@ -551,9 +551,9 @@ class TestGetStreamContext:
         info = {"is_live": True, "id": "vid789", "title": "テスト", "channel": "Ch"}
         mock_translate = AsyncMock(return_value="Test")
         with (
-            patch("livesubs.pipeline.LOGS_DIR", tmp_path),
-            patch("livesubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
-            patch("livesubs.pipeline.translate_text", mock_translate),
+            patch("autosubs.pipeline.LOGS_DIR", tmp_path),
+            patch("autosubs.pipeline.get_stream_info", new_callable=AsyncMock, return_value=info),
+            patch("autosubs.pipeline.translate_text", mock_translate),
         ):
             _, ctx1, _ = await _get_stream_context("https://example.com", client, config)
             _, ctx2, _ = await _get_stream_context("https://example.com", client, config)
@@ -569,7 +569,7 @@ class TestSubtitleWriter:
         config = _make_config()
         srt_path = tmp_path / "test.srt"
 
-        from livesubs.subtitles import SubtitleManager
+        from autosubs.subtitles import SubtitleManager
         sub_manager = SubtitleManager(srt_path)
 
         player = AsyncMock()
@@ -592,7 +592,7 @@ class TestSubtitleWriter:
         config = _make_config()
         srt_path = tmp_path / "test.srt"
 
-        from livesubs.subtitles import SubtitleManager
+        from autosubs.subtitles import SubtitleManager
         sub_manager = SubtitleManager(srt_path)
 
         player = AsyncMock()
@@ -614,7 +614,7 @@ class TestSubtitleWriter:
         config = _make_config()
         srt_path = tmp_path / "test.srt"
 
-        from livesubs.subtitles import SubtitleManager
+        from autosubs.subtitles import SubtitleManager
         sub_manager = SubtitleManager(srt_path)
 
         player = AsyncMock()
@@ -635,7 +635,7 @@ class TestSubtitleWriter:
         config = _make_config()
         srt_path = tmp_path / "test.srt"
 
-        from livesubs.subtitles import SubtitleManager
+        from autosubs.subtitles import SubtitleManager
         sub_manager = SubtitleManager(srt_path)
 
         player = AsyncMock()
@@ -647,7 +647,7 @@ class TestSubtitleWriter:
         await translated_queue.put((0, 5.0, "Sincronizado"))
         await translated_queue.put(None)
 
-        with patch("livesubs.pipeline.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch("autosubs.pipeline.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             await _subtitle_writer(config, translated_queue, sub_manager, player, live=True)
 
         # Debe haber esperado ~2s (end_time=5 - mpv_pos=3)
@@ -660,7 +660,7 @@ class TestSubtitleWriter:
         config = _make_config()
         srt_path = tmp_path / "test.srt"
 
-        from livesubs.subtitles import SubtitleManager
+        from autosubs.subtitles import SubtitleManager
         sub_manager = SubtitleManager(srt_path)
 
         player = AsyncMock()
@@ -672,7 +672,7 @@ class TestSubtitleWriter:
         await translated_queue.put((0, 5.0, "Ya paso"))
         await translated_queue.put(None)
 
-        with patch("livesubs.pipeline.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch("autosubs.pipeline.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             await _subtitle_writer(config, translated_queue, sub_manager, player, live=True)
 
         mock_sleep.assert_not_called()
@@ -730,7 +730,7 @@ class TestTranscribeWorkerParallel:
 
         chunk = _make_chunk(duration=4.5)
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.return_value = "texto paralelo"
             with patch.object(Path, "unlink"):
                 await audio_queue.put(chunk)
@@ -752,7 +752,7 @@ class TestTranscribeWorkerParallel:
         audio_queue: asyncio.Queue = asyncio.Queue()
         text_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.side_effect = ["texto_0", "texto_1", "texto_2"]
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk(duration=4.2))
@@ -784,7 +784,7 @@ class TestTranscribeWorkerParallel:
         audio_queue: asyncio.Queue = asyncio.Queue()
         text_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             # Chunk 0 falla, chunk 1 funciona
             mock_transcribe.side_effect = [None, "texto_1"]
             with patch.object(Path, "unlink"):
@@ -811,7 +811,7 @@ class TestTranscribeWorkerParallel:
         audio_queue: asyncio.Queue = asyncio.Queue()
         text_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.side_effect = RuntimeError("boom")
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk())
@@ -832,7 +832,7 @@ class TestTranscribeWorkerParallel:
         audio_queue: asyncio.Queue = asyncio.Queue()
         text_queue: asyncio.Queue = asyncio.Queue()
 
-        with patch("livesubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
+        with patch("autosubs.pipeline.transcribe_audio", new_callable=AsyncMock) as mock_transcribe:
             mock_transcribe.side_effect = ["texto_0", None, "texto_2"]
             with patch.object(Path, "unlink"):
                 await audio_queue.put(_make_chunk(duration=4.0))

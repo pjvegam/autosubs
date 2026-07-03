@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from livesubs.capture import SystemAudioCapture, _convert_to_16k_mono
-from livesubs.vad import AudioChunk
+from autosubs.capture import SystemAudioCapture, _convert_to_16k_mono
+from autosubs.vad import AudioChunk
 
 
 class TestConvertTo16kMono:

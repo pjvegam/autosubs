@@ -1,6 +1,6 @@
 from unittest.mock import AsyncMock, patch
 
-from livesubs.transcribe import transcribe_audio
+from autosubs.transcribe import transcribe_audio
 
 
 class TestTranscribeAudio:
@@ -49,7 +49,7 @@ class TestTranscribeAudio:
             "texto recuperado",
         ]
 
-        with patch("livesubs.retry.BASE_DELAY", 0.01):
+        with patch("autosubs.retry.BASE_DELAY", 0.01):
             result = await transcribe_audio(client, audio_file, "ja")
         assert result == "texto recuperado"
 
@@ -60,6 +60,6 @@ class TestTranscribeAudio:
         client = AsyncMock()
         client.audio.transcriptions.create.side_effect = RuntimeError("API error")
 
-        with patch("livesubs.retry.BASE_DELAY", 0.01):
+        with patch("autosubs.retry.BASE_DELAY", 0.01):
             result = await transcribe_audio(client, audio_file, "ja")
         assert result is None

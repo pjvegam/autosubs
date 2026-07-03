@@ -110,7 +110,7 @@ OpenRouter:
 ## Replicación
 
 ```powershell
-uv run livesubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark-translators --start-time 1h
+uv run autosubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark-translators --start-time 1h
 ```
 
 Requiere: `OPENAI_API_KEY` y `OPENROUTER_API_KEY` en `.env`.

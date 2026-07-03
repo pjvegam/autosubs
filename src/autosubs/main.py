@@ -3,13 +3,13 @@ import asyncio
 import logging
 import sys
 
-from livesubs.config import Config
-from livesubs.stream import parse_start_time, parse_time_value
+from autosubs.config import Config
+from autosubs.stream import parse_start_time, parse_time_value
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="livesubs",
+        prog="autosubs",
         description="Subtitulos traducidos en vivo para YouTube",
     )
     parser.add_argument(
@@ -18,20 +18,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--source-lang", default="",
-        help="Idioma del audio (default: LIVESUBS_SOURCE_LANG o ja)",
+        help="Idioma del audio (default: AUTOSUBS_SOURCE_LANG o ja)",
     )
     parser.add_argument(
         "--target-lang", default="",
-        help="Idioma de los subtitulos (default: LIVESUBS_TARGET_LANG o es)",
+        help="Idioma de los subtitulos (default: AUTOSUBS_TARGET_LANG o es)",
     )
     parser.add_argument(
         "--segment-duration", default="",
-        help="Duracion de segmento. Acepta: 5, 5s, 30s (default: LIVESUBS_SEGMENT_DURATION o 5)",
+        help="Duracion de segmento. Acepta: 5, 5s, 30s (default: AUTOSUBS_SEGMENT_DURATION o 5)",
     )
     parser.add_argument(
         "--whisper-model", default="",
         help="Modelo de transcripcion: gemini-2.5-pro (API), gpt-4o-transcribe (API), "
-             "local-turbo (GPU), local-v3 (GPU). Default: LIVESUBS_WHISPER_MODEL, "
+             "local-turbo (GPU), local-v3 (GPU). Default: AUTOSUBS_WHISPER_MODEL, "
              "gemini-2.5-pro si GEMINI_API_KEY, sino local-turbo, sino gpt-4o-transcribe",
     )
     parser.add_argument(
@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cookies-browser", default="",
-        help="Browser para cookies de yt-dlp (default: LIVESUBS_COOKIES_BROWSER o firefox). "
+        help="Browser para cookies de yt-dlp (default: AUTOSUBS_COOKIES_BROWSER o firefox). "
              "Usar 'none' para desactivar.",
     )
     parser.add_argument(
@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--diarize", action="store_true",
-        help="Activar diarizacion de speakers (requiere pip install livesubs[diarize])",
+        help="Activar diarizacion de speakers (requiere pip install autosubs[diarize])",
     )
     parser.add_argument(
         "--batch-vod", action="store_true",
@@ -127,7 +127,7 @@ def setup_logging(verbose: bool) -> None:
 
 
 async def async_main(config: Config) -> None:
-    from livesubs.pipeline import run_pipeline
+    from autosubs.pipeline import run_pipeline
     await run_pipeline(config)
 
 

@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from livesubs.transcribe import TranscriptSegment, _is_hallucination
+from autosubs.transcribe import TranscriptSegment, _is_hallucination
 
 logger = logging.getLogger(__name__)
 

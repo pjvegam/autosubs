@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from livesubs.stream import (
+from autosubs.stream import (
     _ytdlp_base_args,
     get_audio_url,
     get_stream_info,
@@ -68,14 +68,14 @@ class TestGetStreamInfo:
     async def test_returns_parsed_json(self):
         info = {"title": "Test Video", "is_live": False}
         proc = _make_process(stdout=json.dumps(info).encode())
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc):
             result = await get_stream_info("https://example.com")
         assert result == info
 
     async def test_raises_on_failure(self):
         proc = _make_process(stderr=b"ERROR: video not found", returncode=1)
         with (
-            patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc),
+            patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc),
             pytest.raises(RuntimeError, match="yt-dlp fallo"),
         ):
             await get_stream_info("https://example.com")
@@ -94,7 +94,7 @@ class TestGetStreamUrls:
             call_count += 1
             return video_proc if call_count == 1 else audio_proc
 
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
             video_url, mpv_audio, ffmpeg_audio = await get_stream_urls("https://example.com")
 
         assert video_url == "https://video.url"
@@ -119,7 +119,7 @@ class TestGetStreamUrls:
                 return _make_process(stdout=b"https://light.url\n")
             return _make_process(stdout=b"https://video.url\n")
 
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
             video_url, mpv_audio, ffmpeg_audio = await get_stream_urls("https://example.com")
 
         assert video_url == "https://video.url"
@@ -139,7 +139,7 @@ class TestGetStreamUrls:
             # Fallback b*
             return _make_process(stdout=b"https://combined.url\n")
 
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
             video_url, mpv_audio, ffmpeg_audio = await get_stream_urls("https://example.com")
 
         assert video_url == "https://combined.url"
@@ -151,7 +151,7 @@ class TestGetAudioUrl:
     async def test_returns_lightest_audio(self):
         """Usa wa* (audio mas ligero) primero."""
         proc = _make_process(stdout=b"https://light-audio.url\n")
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc):
             result = await get_audio_url("https://example.com")
         assert result == "https://light-audio.url"
 
@@ -166,7 +166,7 @@ class TestGetAudioUrl:
                 return _make_process(stderr=b"no wa*", returncode=1)
             return _make_process(stdout=b"https://audio.url\n")
 
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
             result = await get_audio_url("https://example.com")
         assert result == "https://audio.url"
 
@@ -181,7 +181,7 @@ class TestGetAudioUrl:
                 return _make_process(stderr=b"error", returncode=1)
             return _make_process(stdout=b"https://combined.url\n")
 
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", side_effect=mock_create):
             result = await get_audio_url("https://example.com")
         assert result == "https://combined.url"
 
@@ -189,7 +189,7 @@ class TestGetAudioUrl:
         """RuntimeError si ningun formato funciona."""
         proc = _make_process(stderr=b"error", returncode=1)
         with (
-            patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc),
+            patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc),
             pytest.raises(RuntimeError, match="No se pudo obtener URL de audio"),
         ):
             await get_audio_url("https://example.com")
@@ -199,22 +199,22 @@ class TestIsLive:
     async def test_live_stream(self):
         info = {"is_live": True}
         proc = _make_process(stdout=json.dumps(info).encode())
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc):
             assert await is_live("https://example.com") is True
 
     async def test_vod(self):
         info = {"is_live": False}
         proc = _make_process(stdout=json.dumps(info).encode())
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc):
             assert await is_live("https://example.com") is False
 
     async def test_missing_field_defaults_to_false(self):
         info = {"title": "Test"}
         proc = _make_process(stdout=json.dumps(info).encode())
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc):
             assert await is_live("https://example.com") is False
 
     async def test_error_defaults_to_false(self):
         proc = _make_process(stderr=b"error", returncode=1)
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc):
             assert await is_live("https://example.com") is False

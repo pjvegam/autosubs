@@ -6,7 +6,7 @@
 - **Tipo**: Chica japonesa hablando sola sobre fitness/gym (audio limpio, sin gameplay/música)
 - **Idioma**: Japonés
 - **Hardware**: RTX 5060 Blackwell sm_120, 8GB VRAM
-- **Pipeline**: archivo MP3 batch al modelo, pre-cacheado en `livesubs_logs/segment_Ndlo93lI0xI_3600.mp3`
+- **Pipeline**: archivo MP3 batch al modelo, pre-cacheado en `autosubs_logs/segment_Ndlo93lI0xI_3600.mp3`
 
 ## Resultados
 
@@ -112,7 +112,7 @@ Para audio **con ruido/silencios** (gameplay):
 Para correr este mismo benchmark:
 
 ```powershell
-uv run livesubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark --start-time 1h --benchmark-no-translate
+uv run autosubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark --start-time 1h --benchmark-no-translate
 ```
 
 El segmento de 20min ya está cacheado. Modelos requieren API keys: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `HF_TOKEN`.

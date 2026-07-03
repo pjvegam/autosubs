@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from livesubs.transcribe import TranscriptSegment, transcribe_verbose
+from autosubs.transcribe import TranscriptSegment, transcribe_verbose
 
 
 def _make_process(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0):
@@ -17,45 +17,45 @@ def _make_process(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0)
 
 class TestDownloadAudio:
     async def test_downloads_audio_only(self, tmp_path):
-        from livesubs.stream import download_audio
+        from autosubs.stream import download_audio
 
         output = str(tmp_path / "audio.mp3")
         Path(output).write_bytes(b"fake mp3 data" * 1000)
 
         proc = _make_process(returncode=0)
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc):
             await download_audio("https://example.com", output)
 
     async def test_raises_on_failure(self, tmp_path):
-        from livesubs.stream import download_audio
+        from autosubs.stream import download_audio
 
         output = str(tmp_path / "audio.mp3")
         proc = _make_process(returncode=1)
         with (
-            patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc),
+            patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc),
             pytest.raises(RuntimeError, match="yt-dlp audio download fallo"),
         ):
             await download_audio("https://example.com", output)
 
     async def test_raises_when_file_missing(self, tmp_path):
-        from livesubs.stream import download_audio
+        from autosubs.stream import download_audio
 
         output = str(tmp_path / "nonexistent.mp3")
         proc = _make_process(returncode=0)
         with (
-            patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc),
+            patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc),
             pytest.raises(RuntimeError, match="Archivo no encontrado"),
         ):
             await download_audio("https://example.com", output)
 
     async def test_uses_ba_format(self, tmp_path):
-        from livesubs.stream import download_audio
+        from autosubs.stream import download_audio
 
         output = str(tmp_path / "audio.mp3")
         Path(output).write_bytes(b"fake")
 
         proc = _make_process(returncode=0)
-        mock_target = "livesubs.stream.asyncio.create_subprocess_exec"
+        mock_target = "autosubs.stream.asyncio.create_subprocess_exec"
         with patch(mock_target, return_value=proc) as mock_exec:
             await download_audio("https://example.com", output)
 
@@ -67,7 +67,7 @@ class TestDownloadAudio:
 
 class TestSplitAudio:
     async def test_splits_audio_into_chunks(self, tmp_path):
-        from livesubs.stream import split_audio
+        from autosubs.stream import split_audio
 
         input_file = str(tmp_path / "audio.mp3")
         output_dir = str(tmp_path / "chunks")
@@ -78,7 +78,7 @@ class TestSplitAudio:
         (chunks_path / "chunk_001.mp3").write_bytes(b"chunk1")
 
         proc = _make_process(returncode=0)
-        with patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc):
+        with patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc):
             result = await split_audio(input_file, output_dir, chunk_seconds=1200)
 
         assert len(result) == 2
@@ -87,11 +87,11 @@ class TestSplitAudio:
         assert result[1].name == "chunk_001.mp3"
 
     async def test_raises_on_ffmpeg_failure(self, tmp_path):
-        from livesubs.stream import split_audio
+        from autosubs.stream import split_audio
 
         proc = _make_process(returncode=1)
         with (
-            patch("livesubs.stream.asyncio.create_subprocess_exec", return_value=proc),
+            patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc),
             pytest.raises(RuntimeError, match="ffmpeg split fallo"),
         ):
             await split_audio(
@@ -100,13 +100,13 @@ class TestSplitAudio:
             )
 
     async def test_uses_correct_segment_time(self, tmp_path):
-        from livesubs.stream import split_audio
+        from autosubs.stream import split_audio
 
         chunks_path = tmp_path / "chunks"
         chunks_path.mkdir()
 
         proc = _make_process(returncode=0)
-        mock_target = "livesubs.stream.asyncio.create_subprocess_exec"
+        mock_target = "autosubs.stream.asyncio.create_subprocess_exec"
         with patch(mock_target, return_value=proc) as mock_exec:
             await split_audio(
                 str(tmp_path / "a.mp3"), str(chunks_path), chunk_seconds=600,
@@ -191,7 +191,7 @@ class TestTranscribeVerbose:
         client = AsyncMock()
         client.audio.transcriptions.create.side_effect = RuntimeError("API error")
 
-        with patch("livesubs.retry.BASE_DELAY", 0.01):
+        with patch("autosubs.retry.BASE_DELAY", 0.01):
             result = await transcribe_verbose(client, audio_file, "en")
         assert result is None
 

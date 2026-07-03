@@ -1,5 +1,5 @@
 
-from livesubs.subtitles import SubtitleManager, _format_timestamp
+from autosubs.subtitles import SubtitleManager, _format_timestamp
 
 
 class TestFormatTimestamp:

@@ -1,4 +1,4 @@
-# LiveSubs - Documentación de Benchmarks
+# AutoSubs - Documentación de Benchmarks
 
 Histórico de pruebas de modelos para el pipeline JA → ES (transcripción + traducción).
 

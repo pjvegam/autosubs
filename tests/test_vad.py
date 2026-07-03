@@ -1,7 +1,7 @@
 import wave
 from unittest.mock import patch
 
-from livesubs.vad import FRAME_BYTES, SAMPLE_RATE, AudioChunk, VadSegmenter
+from autosubs.vad import FRAME_BYTES, SAMPLE_RATE, AudioChunk, VadSegmenter
 
 
 def _seconds_to_bytes(seconds: float) -> bytes:

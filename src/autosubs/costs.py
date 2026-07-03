@@ -126,7 +126,7 @@ class CostTracker:
         if not self.entries:
             return None
 
-        from livesubs.subtitles import _format_timestamp
+        from autosubs.subtitles import _format_timestamp
 
         logs_dir.mkdir(parents=True, exist_ok=True)
         if video_id:
@@ -157,7 +157,7 @@ class CostTracker:
         path = logs_dir / filename
 
         lines = [
-            f"# LiveSubs - {now:%Y-%m-%d %H:%M}",
+            f"# AutoSubs - {now:%Y-%m-%d %H:%M}",
             "",
             f"**Whisper:** {self.whisper_model} | "
             f"**GPT:** {self.translation_model} | "

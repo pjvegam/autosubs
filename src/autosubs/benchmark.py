@@ -16,12 +16,12 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from livesubs.config import LOGS_DIR, YT_ID_RE, Config
-from livesubs.costs import CostTracker, escape_md_table
-from livesubs.stream import download_audio, set_cookies_browser
-from livesubs.transcribe import transcribe_audio, transcribe_verbose
-from livesubs.translate import translate_text
-from livesubs.vad import SAMPLE_RATE, AudioChunk, VadSegmenter
+from autosubs.config import LOGS_DIR, YT_ID_RE, Config
+from autosubs.costs import CostTracker, escape_md_table
+from autosubs.stream import download_audio, set_cookies_browser
+from autosubs.transcribe import transcribe_audio, transcribe_verbose
+from autosubs.translate import translate_text
+from autosubs.vad import SAMPLE_RATE, AudioChunk, VadSegmenter
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ async def run_benchmark(config: Config) -> None:
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     persistent_segment = str(LOGS_DIR / f"segment_{video_id}_{config.start_time}.mp3")
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="livesubs_bench_"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="autosubs_bench_"))
     try:
         # 1-2. Descargar y extraer segmento (si no hay cache)
         if not segment_file:
@@ -870,7 +870,7 @@ async def _segment_audio_with_vad(
     )
 
     # ffmpeg -> PCM 16kHz mono con EQ de transcripcion
-    from livesubs.audio import TRANSCRIPTION_AUDIO_FILTER
+    from autosubs.audio import TRANSCRIPTION_AUDIO_FILTER
 
     cmd = [
         "ffmpeg", "-loglevel", "warning",
@@ -1261,7 +1261,7 @@ async def _transcribe_local_subprocess(
     script = f"""
 import json, os, sys, time
 sys.path.insert(0, {str(Path(__file__).resolve().parent.parent)!r})
-from livesubs.local_whisper import LocalWhisperModel
+from autosubs.local_whisper import LocalWhisperModel
 from pathlib import Path
 
 model = LocalWhisperModel(model_size={model_size!r})
@@ -1396,7 +1396,7 @@ def _generate_comparison(
     separator = " | ".join("---" for _ in models)
 
     lines: list[str] = [
-        f"# Benchmark LiveSubs — {video_id}",
+        f"# Benchmark AutoSubs — {video_id}",
         "",
         f"**Fecha:** {now:%Y-%m-%d %H:%M} | "
         f"**Audio:** {mm_start:02d}:{ss_start:02d}-{mm_end:02d}:{ss_end:02d} | "

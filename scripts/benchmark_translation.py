@@ -20,14 +20,14 @@ print = functools.partial(print, flush=True)  # type: ignore[assignment]
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-# Agregar src/ al path para importar livesubs
+# Agregar src/ al path para importar autosubs
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 load_dotenv(_PROJECT_ROOT / ".env")
 
-from livesubs.stream import _ytdlp_base_args
-from livesubs.translate import _build_system_prompt
+from autosubs.stream import _ytdlp_base_args
+from autosubs.translate import _build_system_prompt
 
 # --- Constantes ---
 

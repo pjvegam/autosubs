@@ -1,4 +1,4 @@
-from livesubs.costs import PRICING, CostTracker, escape_md_table
+from autosubs.costs import PRICING, CostTracker, escape_md_table
 
 
 class TestCostTracker:
@@ -109,7 +109,7 @@ class TestSessionLog:
         assert path.exists()
 
         content = path.read_text(encoding="utf-8")
-        assert "# LiveSubs" in content
+        assert "# AutoSubs" in content
         assert "ja -> es" in content
         assert "gpt-4o-transcribe" in content
         assert "gpt-4.1" in content

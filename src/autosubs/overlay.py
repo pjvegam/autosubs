@@ -33,7 +33,7 @@ class SubtitleOverlay:
         """
         self._on_close = on_close
         self._root = tk.Tk()
-        self._root.title("livesubs")
+        self._root.title("autosubs")
         self._root.configure(bg=_BG_COLOR)
 
         # Sin bordes, siempre encima

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from livesubs.retry import with_retries
+from autosubs.retry import with_retries
 
 logger = logging.getLogger(__name__)
 

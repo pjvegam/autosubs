@@ -1,4 +1,4 @@
-# LiveSubs
+# AutoSubs
 
 ## Proyecto
 Pipeline de subtitulos traducidos en tiempo real para YouTube.

@@ -56,7 +56,7 @@ Cache de modelos de HuggingFace en `~/.cache/huggingface/hub/`:
 
 ## Audio cache
 
-Cache de segmentos de benchmark en `livesubs_logs/`:
+Cache de segmentos de benchmark en `autosubs_logs/`:
 
 - `segment_{video_id}_{start_time}.mp3` — audio de 20min para benchmarks
 - `benchmark_cache_{video_id}_{start_time}.json` — resultados de transcripción
@@ -90,25 +90,25 @@ OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=...
 OPENROUTER_API_KEY=sk-or-v1-...
 HF_TOKEN=hf_...
-LIVESUBS_WHISPER_MODEL=local-turbo  # opcional
-LIVESUBS_SOURCE_LANG=ja              # opcional
-LIVESUBS_TARGET_LANG=es              # opcional
+AUTOSUBS_WHISPER_MODEL=local-turbo  # opcional
+AUTOSUBS_SOURCE_LANG=ja              # opcional
+AUTOSUBS_TARGET_LANG=es              # opcional
 ```
 
 ## Issues conocidos del entorno
 
-### `livesubs.exe` se queda bloqueada
+### `autosubs.exe` se queda bloqueada
 
-Cuando una sesión de PowerShell ejecuta `uv run livesubs`, queda un proceso `livesubs.exe` en memoria. La próxima `uv sync` falla:
+Cuando una sesión de PowerShell ejecuta `uv run autosubs`, queda un proceso `autosubs.exe` en memoria. La próxima `uv sync` falla:
 
 ```
-error: failed to remove file ... livesubs.exe: El proceso no tiene acceso al archivo
+error: failed to remove file ... autosubs.exe: El proceso no tiene acceso al archivo
 ```
 
 **Workaround**: cerrar la terminal vieja, abrir nueva. O bypass uv:
 
 ```bash
-.venv/Scripts/python -m livesubs.main "URL" --benchmark ...
+.venv/Scripts/python -m autosubs.main "URL" --benchmark ...
 ```
 
 ### `ご視聴ありがとうございました` en local-turbo

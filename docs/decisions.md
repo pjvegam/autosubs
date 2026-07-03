@@ -148,7 +148,7 @@ Registro de decisiones tomadas con justificación. Sirve para cuando alguien (o 
 **Override manual**:
 - `--whisper-model gpt-4o-transcribe` para forzar OpenAI ASR
 - `--gpt-model gpt-4.1` para forzar OpenAI translator
-- `LIVESUBS_WHISPER_MODEL` y `LIVESUBS_GPT_MODEL` env vars
+- `AUTOSUBS_WHISPER_MODEL` y `AUTOSUBS_GPT_MODEL` env vars
 
 **Cuándo reconsiderar**:
 - Si Gemini sube precio significativamente

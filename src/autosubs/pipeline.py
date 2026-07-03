@@ -14,13 +14,13 @@ from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
 
-from livesubs.audio import AudioSegmenter
-from livesubs.capture import SystemAudioCapture
-from livesubs.config import LOGS_DIR, YT_ID_RE, Config
-from livesubs.costs import CostTracker
-from livesubs.overlay import SubtitleOverlay, run_overlay_loop
-from livesubs.player import MPVPlayer
-from livesubs.stream import (
+from autosubs.audio import AudioSegmenter
+from autosubs.capture import SystemAudioCapture
+from autosubs.config import LOGS_DIR, YT_ID_RE, Config
+from autosubs.costs import CostTracker
+from autosubs.overlay import SubtitleOverlay, run_overlay_loop
+from autosubs.player import MPVPlayer
+from autosubs.stream import (
     cut_video,
     download_audio,
     download_vod,
@@ -29,19 +29,19 @@ from livesubs.stream import (
     set_cookies_browser,
     split_audio,
 )
-from livesubs.subtitles import SubtitleManager, srt_last_end_time
-from livesubs.transcribe import (
+from autosubs.subtitles import SubtitleManager, srt_last_end_time
+from autosubs.transcribe import (
     TranscriptSegment,
     transcribe_audio,
     transcribe_gemini_chunk,
     transcribe_verbose,
 )
-from livesubs.translate import summarize_session, translate_text
-from livesubs.vad import AudioChunk
+from autosubs.translate import summarize_session, translate_text
+from autosubs.vad import AudioChunk
 
 if TYPE_CHECKING:
-    from livesubs.diarize import DiarizationEngine
-    from livesubs.local_whisper import LocalWhisperModel
+    from autosubs.diarize import DiarizationEngine
+    from autosubs.local_whisper import LocalWhisperModel
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def _create_translate_client(gpt_model: str, openai_api_key: str) -> AsyncOpenAI
 
 async def _load_local_whisper(model_size: str) -> LocalWhisperModel:
     """Carga modelo faster-whisper en GPU (blocking → to_thread)."""
-    from livesubs.local_whisper import LocalWhisperModel
+    from autosubs.local_whisper import LocalWhisperModel
 
     return await asyncio.to_thread(LocalWhisperModel, model_size)
 
@@ -586,7 +586,7 @@ async def _monitor_overlay(
 
 async def _create_diarizer(*, vod: bool = False) -> DiarizationEngine:
     """Crea el engine de diarizacion (carga modelo, ~5s)."""
-    from livesubs.diarize import DiarizationEngine, SortformerModel
+    from autosubs.diarize import DiarizationEngine, SortformerModel
 
     model = await asyncio.to_thread(SortformerModel, vod=vod)
     engine = DiarizationEngine(model, wait_timeout=30.0 if vod else 5.0)
@@ -626,31 +626,31 @@ async def _run_cached_pipeline(
         await player.wait()
     finally:
         await player.close()
-    logger.info("livesubs finalizado (cache)")
+    logger.info("autosubs finalizado (cache)")
 
 
 async def run_pipeline(config: Config) -> None:
     """Orquesta todo el pipeline de subtitulos."""
-    logger.info("Iniciando livesubs...")
+    logger.info("Iniciando autosubs...")
     set_cookies_browser(config.cookies_browser)
 
     if config.benchmark_e2e:
-        from livesubs.benchmark import run_e2e_benchmark
+        from autosubs.benchmark import run_e2e_benchmark
         await run_e2e_benchmark(config)
         return
 
     if config.fill_gaps:
-        from livesubs.recover import fill_gaps as recover_fill_gaps
+        from autosubs.recover import fill_gaps as recover_fill_gaps
         await recover_fill_gaps(config)
         return
 
     if config.benchmark_translators:
-        from livesubs.benchmark import run_translator_benchmark
+        from autosubs.benchmark import run_translator_benchmark
         await run_translator_benchmark(config)
         return
 
     if config.benchmark:
-        from livesubs.benchmark import run_benchmark
+        from autosubs.benchmark import run_benchmark
         await run_benchmark(config)
         return
 
@@ -711,8 +711,8 @@ async def _run_batch_vod_pipeline(
     """
     logger.info("Modo batch-vod: descargando audio...")
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="livesubs_batch_"))
-    srt_path = tmp_dir / "livesubs.srt"
+    tmp_dir = Path(tempfile.mkdtemp(prefix="autosubs_batch_"))
+    srt_path = tmp_dir / "autosubs.srt"
     asr_client = AsyncOpenAI(api_key=config.api_key)
     translate_client = _create_translate_client(config.gpt_model, config.api_key)
     chunk_seconds = 1200  # 20 min
@@ -890,7 +890,7 @@ async def _run_batch_vod_pipeline(
             if video_id:
                 tracker.save_srt(LOGS_DIR, video_id=video_id)
             tracker.save_markdown(LOGS_DIR)
-        logger.info("livesubs finalizado (batch-vod)")
+        logger.info("autosubs finalizado (batch-vod)")
 
 
 async def _monitor_mpv_simple(player: MPVPlayer) -> None:
@@ -904,7 +904,7 @@ async def _run_mpv_pipeline(
     cache_end: float = 0.0,
 ) -> None:
     """Pipeline con MPV: video + subtitulos SRT (modo VOD)."""
-    tmp_dir = Path(tempfile.mkdtemp(prefix="livesubs_"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="autosubs_"))
     audio_dir = tmp_dir / "audio"
 
     vod_start = config.start_time if not live else 0
@@ -917,7 +917,7 @@ async def _run_mpv_pipeline(
         srt_path = LOGS_DIR / f"{video_id}.srt"
         sub_manager = SubtitleManager(srt_path, append=cache_end > 0)
     else:
-        srt_path = tmp_dir / "livesubs.srt"
+        srt_path = tmp_dir / "autosubs.srt"
         sub_manager = SubtitleManager(srt_path)
 
     if cache_end > 0:
@@ -1076,14 +1076,14 @@ async def _run_mpv_pipeline(
             if not video_id:
                 tracker.save_srt(LOGS_DIR)
             tracker.save_markdown(LOGS_DIR)
-        logger.info("livesubs finalizado")
+        logger.info("autosubs finalizado")
 
 
 async def _run_system_audio_pipeline(config: Config) -> None:
     """Pipeline con audio del sistema: captura loopback WASAPI + overlay."""
     logger.info("Modo audio del sistema (loopback WASAPI)")
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="livesubs_"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="autosubs_"))
     audio_dir = tmp_dir / "audio"
 
     asr_client = AsyncOpenAI(api_key=config.api_key)
@@ -1162,4 +1162,4 @@ async def _run_system_audio_pipeline(config: Config) -> None:
         logger.info("\n%s", tracker.summary())
         tracker.save_srt(LOGS_DIR)
         tracker.save_markdown(LOGS_DIR)
-        logger.info("livesubs finalizado")
+        logger.info("autosubs finalizado")

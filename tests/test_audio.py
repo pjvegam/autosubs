@@ -3,8 +3,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from livesubs.audio import AudioSegmenter
-from livesubs.vad import AudioChunk
+from autosubs.audio import AudioSegmenter
+from autosubs.vad import AudioChunk
 
 
 class TestAudioSegmenter:
@@ -24,7 +24,7 @@ class TestAudioSegmenter:
         mock_proc.returncode = None
 
         with patch(
-            "livesubs.audio.asyncio.create_subprocess_exec", return_value=mock_proc,
+            "autosubs.audio.asyncio.create_subprocess_exec", return_value=mock_proc,
         ) as mock_exec:
             await seg.start()
 
@@ -53,10 +53,10 @@ class TestAudioSegmenter:
         mock_ffmpeg.stdout = MagicMock()
 
         with patch(
-            "livesubs.audio.asyncio.to_thread",
+            "autosubs.audio.asyncio.to_thread",
             new_callable=AsyncMock,
             return_value=(mock_ytdlp, mock_ffmpeg),
-        ), patch("livesubs.audio.threading.Thread") as mock_thread:
+        ), patch("autosubs.audio.threading.Thread") as mock_thread:
             mock_thread.return_value = MagicMock()
             await seg.start_live("https://youtube.com/watch?v=test")
 
@@ -83,7 +83,7 @@ class TestAudioSegmenter:
         seg.process.stderr = AsyncMock()
         seg.process.stderr.read = AsyncMock(return_value=b"")
 
-        with patch("livesubs.audio.AudioSegmenter._make_vad_segmenter") as mock_vad:
+        with patch("autosubs.audio.AudioSegmenter._make_vad_segmenter") as mock_vad:
             mock_segmenter = MagicMock()
             mock_segmenter.feed.return_value = [mock_chunk]
             mock_segmenter.flush_remaining.return_value = None
@@ -112,7 +112,7 @@ class TestAudioSegmenter:
         seg.process.stderr = AsyncMock()
         seg.process.stderr.read = AsyncMock(return_value=b"")
 
-        with patch("livesubs.audio.AudioSegmenter._make_vad_segmenter") as mock_vad:
+        with patch("autosubs.audio.AudioSegmenter._make_vad_segmenter") as mock_vad:
             mock_segmenter = MagicMock()
             mock_segmenter.flush_remaining.return_value = None
             mock_vad.return_value = mock_segmenter
@@ -170,7 +170,7 @@ class TestAudioSegmenter:
         seg._ffmpeg_popen = mock_ffmpeg
         seg._ytdlp_popen = mock_ytdlp
 
-        with patch("livesubs.audio.asyncio.to_thread", new_callable=AsyncMock):
+        with patch("autosubs.audio.asyncio.to_thread", new_callable=AsyncMock):
             await seg.stop()
 
         mock_ffmpeg.terminate.assert_called_once()
@@ -199,7 +199,7 @@ class TestAudioSegmenter:
         seg.process.stderr = AsyncMock()
         seg.process.stderr.read = AsyncMock(return_value=b"")
 
-        with patch("livesubs.audio.AudioSegmenter._make_vad_segmenter") as mock_vad:
+        with patch("autosubs.audio.AudioSegmenter._make_vad_segmenter") as mock_vad:
             mock_segmenter = MagicMock()
             mock_segmenter.feed.return_value = []
             mock_segmenter.flush_remaining.return_value = None

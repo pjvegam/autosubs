@@ -1,4 +1,4 @@
-# LiveSubs
+# AutoSubs
 
 > Subtítulos traducidos en tiempo real para YouTube. Multi-provider ASR + LLM translation con fallback automático, circuit breaker, cache incremental y recuperación de transcripciones perdidas.
 
@@ -9,7 +9,7 @@
 
 ## ¿Qué hace?
 
-Mientras mirás un stream de YouTube en MPV, **LiveSubs transcribe el audio, lo traduce, y te muestra subtítulos en tu idioma** — todo en vivo. Pensado para consumir contenido de creadores en otros idiomas (en mi caso, streamers japoneses) sin esperar a que alguien los traduzca.
+Mientras mirás un stream de YouTube en MPV, **AutoSubs transcribe el audio, lo traduce, y te muestra subtítulos en tu idioma** — todo en vivo. Pensado para consumir contenido de creadores en otros idiomas (en mi caso, streamers japoneses) sin esperar a que alguien los traduzca.
 
 ```
 ┌──────────┐    ┌──────┐    ┌─────┐    ┌────────────┐    ┌─────┐    ┌─────┐
@@ -62,15 +62,15 @@ curl -fsSL https://deno.land/install.sh | sh   # deno
 ## Quickstart
 
 ```bash
-git clone https://github.com/pjvegam/livesubs.git
-cd livesubs
+git clone https://github.com/pjvegam/autosubs.git
+cd autosubs
 uv sync --extra gemini  # opcional: añade soporte Gemini
 
 # Crear .env con tu API key
 echo "OPENAI_API_KEY=sk-..." > .env
 
 # Mirar un stream japonés con subs en español (default)
-uv run livesubs "https://www.youtube.com/watch?v=..."
+uv run autosubs "https://www.youtube.com/watch?v=..."
 ```
 
 ## Setup recomendado (mejor calidad/precio)
@@ -79,10 +79,10 @@ uv run livesubs "https://www.youtube.com/watch?v=..."
 OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=...                                  # Setup A: ASR
 OPENROUTER_API_KEY=sk-or-v1-...                     # Setup A: traducción
-LIVESUBS_WHISPER_MODEL=gemini-2.5-pro
-LIVESUBS_GPT_MODEL=anthropic/claude-haiku-4.5
-LIVESUBS_SOURCE_LANG=ja
-LIVESUBS_TARGET_LANG=es
+AUTOSUBS_WHISPER_MODEL=gemini-2.5-pro
+AUTOSUBS_GPT_MODEL=anthropic/claude-haiku-4.5
+AUTOSUBS_SOURCE_LANG=ja
+AUTOSUBS_TARGET_LANG=es
 ```
 
 **Costo estimado**: ~$0.43 por stream de 2h (con fallback a gpt-4o cuando Gemini falla).
@@ -93,34 +93,34 @@ Ver [docs/pricing-reference-2026-04.md](docs/pricing-reference-2026-04.md) para 
 
 ### Stream en vivo / VOD de YouTube
 ```bash
-uv run livesubs "https://www.youtube.com/watch?v=XXXXXX"
+uv run autosubs "https://www.youtube.com/watch?v=XXXXXX"
 ```
 
 ### Empezar desde un punto específico
 ```bash
-uv run livesubs "URL" --start-time 1h30m     # también acepta 5400, 1:30:00, 90m
+uv run autosubs "URL" --start-time 1h30m     # también acepta 5400, 1:30:00, 90m
 ```
 
 ### Limitar duración a traducir
 ```bash
-uv run livesubs "URL" --max-minutes 30        # o 30m, 0:30:00
+uv run autosubs "URL" --max-minutes 30        # o 30m, 0:30:00
 ```
 
 ### Audio del sistema (cualquier audio que salga de tu PC)
 ```bash
-uv run livesubs --system-audio                # juegos, Discord, otros sitios
+uv run autosubs --system-audio                # juegos, Discord, otros sitios
 ```
 
 ### Recuperar transcripciones perdidas
 Si Gemini tuvo outage durante una sesión y perdiste chunks:
 ```bash
-uv run livesubs "URL" --fill-gaps             # usa video local + gpt-4o-transcribe
+uv run autosubs "URL" --fill-gaps             # usa video local + gpt-4o-transcribe
 ```
 
 ### Forzar provider específico
 ```bash
-uv run livesubs "URL" --whisper-model gpt-4o-transcribe        # ASR sólido garantizado
-uv run livesubs "URL" --gpt-model deepseek/deepseek-chat       # traductor barato
+uv run autosubs "URL" --whisper-model gpt-4o-transcribe        # ASR sólido garantizado
+uv run autosubs "URL" --gpt-model deepseek/deepseek-chat       # traductor barato
 ```
 
 ## Stack técnico
@@ -191,7 +191,7 @@ Para 60h streaming/mes (~2h/día): **$13/mes en Setup A**.
 
 ## Configuración completa
 
-Ver `.env.example` y output de `uv run livesubs --help` para todas las opciones (~25 flags).
+Ver `.env.example` y output de `uv run autosubs --help` para todas las opciones (~25 flags).
 
 Variables principales:
 
@@ -201,8 +201,8 @@ Variables principales:
 | `GEMINI_API_KEY` | (opcional) | Activa Setup A ASR |
 | `OPENROUTER_API_KEY` | (opcional) | Activa Setup A traducción (Claude Haiku, DeepSeek, Kimi, etc.) |
 | `HF_TOKEN` | (opcional) | Para Cohere Transcribe (modelo gated) |
-| `LIVESUBS_WHISPER_MODEL` | auto-detect | `gemini-2.5-pro`, `gpt-4o-transcribe`, `local-turbo`, `local-v3` |
-| `LIVESUBS_GPT_MODEL` | auto-detect | `gpt-4.1`, `anthropic/claude-haiku-4.5`, `deepseek/deepseek-chat`, etc. |
+| `AUTOSUBS_WHISPER_MODEL` | auto-detect | `gemini-2.5-pro`, `gpt-4o-transcribe`, `local-turbo`, `local-v3` |
+| `AUTOSUBS_GPT_MODEL` | auto-detect | `gpt-4.1`, `anthropic/claude-haiku-4.5`, `deepseek/deepseek-chat`, etc. |
 
 ## Hardware
 
@@ -220,8 +220,8 @@ uv run ruff check src/                   # 0 issues
 ## Estructura del repositorio
 
 ```
-livesubs/
-├── src/livesubs/
+autosubs/
+├── src/autosubs/
 │   ├── pipeline.py        # orquestación async (TaskGroup workers)
 │   ├── transcribe.py      # ASR routing: OpenAI / Gemini / faster-whisper
 │   ├── translate.py       # LLM translation con context window

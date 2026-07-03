@@ -134,7 +134,7 @@ E2E es bueno como **fallback simple** si Setup A falla por algún motivo, o para
 ## Replicación
 
 ```powershell
-uv run livesubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark-e2e --start-time 1h
+uv run autosubs "https://www.youtube.com/watch?v=Ndlo93lI0xI" --benchmark-e2e --start-time 1h
 ```
 
 Reusa audio cacheado. Costo: ~$0.15 por corrida.

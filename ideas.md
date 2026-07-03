@@ -1,4 +1,4 @@
-# Ideas y mejoras pendientes — LiveSubs
+# Ideas y mejoras pendientes — AutoSubs
 
 ## Mejoras de calidad rapidas (low-hanging fruit)
 

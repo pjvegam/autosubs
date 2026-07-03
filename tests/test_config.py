@@ -2,22 +2,22 @@ from unittest.mock import patch
 
 import pytest
 
-from livesubs.config import Config
+from autosubs.config import Config
 
 
 class TestConfig:
     def test_create_with_explicit_api_key(self, monkeypatch):
         # Patch load_dotenv para que no re-cargue .env del proyecto
-        monkeypatch.setattr("livesubs.config.load_dotenv", lambda: None)
+        monkeypatch.setattr("autosubs.config.load_dotenv", lambda: None)
         # Forzar defaults basicos (sin Gemini, sin OpenRouter, sin faster-whisper)
         monkeypatch.setattr(
-            "livesubs.config.importlib.util.find_spec", lambda name: None,
+            "autosubs.config.importlib.util.find_spec", lambda name: None,
         )
         for var in (
-            "LIVESUBS_SOURCE_LANG", "LIVESUBS_TARGET_LANG",
+            "AUTOSUBS_SOURCE_LANG", "AUTOSUBS_TARGET_LANG",
             "GEMINI_API_KEY", "OPENROUTER_API_KEY",
-            "LIVESUBS_WHISPER_MODEL", "LIVESUBS_GPT_MODEL",
-            "LIVESUBS_SEGMENT_DURATION",
+            "AUTOSUBS_WHISPER_MODEL", "AUTOSUBS_GPT_MODEL",
+            "AUTOSUBS_SEGMENT_DURATION",
         ):
             monkeypatch.delenv(var, raising=False)
         config = Config(url="https://example.com", api_key="sk-test123")
@@ -31,15 +31,15 @@ class TestConfig:
         assert config.verbose is False
 
     def test_langs_from_env_vars(self, monkeypatch):
-        monkeypatch.setenv("LIVESUBS_SOURCE_LANG", "en")
-        monkeypatch.setenv("LIVESUBS_TARGET_LANG", "fr")
+        monkeypatch.setenv("AUTOSUBS_SOURCE_LANG", "en")
+        monkeypatch.setenv("AUTOSUBS_TARGET_LANG", "fr")
         config = Config(url="https://example.com", api_key="sk-test")
         assert config.source_lang == "en"
         assert config.target_lang == "fr"
 
     def test_explicit_langs_override_env(self, monkeypatch):
-        monkeypatch.setenv("LIVESUBS_SOURCE_LANG", "en")
-        monkeypatch.setenv("LIVESUBS_TARGET_LANG", "fr")
+        monkeypatch.setenv("AUTOSUBS_SOURCE_LANG", "en")
+        monkeypatch.setenv("AUTOSUBS_TARGET_LANG", "fr")
         config = Config(
             url="https://example.com", api_key="sk-test",
             source_lang="ko", target_lang="de",
@@ -56,7 +56,7 @@ class TestConfig:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         # Mockear load_dotenv para evitar que recargue el .env real
         with (
-            patch("livesubs.config.load_dotenv"),
+            patch("autosubs.config.load_dotenv"),
             pytest.raises(ValueError, match="OPENAI_API_KEY no encontrada"),
         ):
             Config(url="https://example.com")
@@ -85,24 +85,24 @@ class TestConfig:
         assert config.verbose is True
 
     def test_segment_duration_from_env(self, monkeypatch):
-        monkeypatch.setenv("LIVESUBS_SEGMENT_DURATION", "10")
+        monkeypatch.setenv("AUTOSUBS_SEGMENT_DURATION", "10")
         config = Config(url="https://example.com", api_key="sk-test")
         assert config.segment_duration == 10
 
     def test_whisper_model_from_env(self, monkeypatch):
-        monkeypatch.setenv("LIVESUBS_WHISPER_MODEL", "whisper-1")
+        monkeypatch.setenv("AUTOSUBS_WHISPER_MODEL", "whisper-1")
         config = Config(url="https://example.com", api_key="sk-test")
         assert config.whisper_model == "whisper-1"
 
     def test_gpt_model_from_env(self, monkeypatch):
-        monkeypatch.setenv("LIVESUBS_GPT_MODEL", "gpt-4o")
+        monkeypatch.setenv("AUTOSUBS_GPT_MODEL", "gpt-4o")
         config = Config(url="https://example.com", api_key="sk-test")
         assert config.gpt_model == "gpt-4o"
 
     def test_explicit_params_override_env(self, monkeypatch):
-        monkeypatch.setenv("LIVESUBS_SEGMENT_DURATION", "10")
-        monkeypatch.setenv("LIVESUBS_WHISPER_MODEL", "whisper-1")
-        monkeypatch.setenv("LIVESUBS_GPT_MODEL", "gpt-4o")
+        monkeypatch.setenv("AUTOSUBS_SEGMENT_DURATION", "10")
+        monkeypatch.setenv("AUTOSUBS_WHISPER_MODEL", "whisper-1")
+        monkeypatch.setenv("AUTOSUBS_GPT_MODEL", "gpt-4o")
         config = Config(
             url="https://example.com", api_key="sk-test",
             segment_duration=3, whisper_model="custom", gpt_model="custom-gpt",

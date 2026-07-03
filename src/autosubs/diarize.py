@@ -1,6 +1,6 @@
 """Diarizacion de speakers en streaming con NVIDIA Sortformer.
 
-Requiere instalacion opcional: pip install livesubs[diarize]
+Requiere instalacion opcional: pip install autosubs[diarize]
 Basado en WhisperLiveKit sortformer_backend.py.
 """
 

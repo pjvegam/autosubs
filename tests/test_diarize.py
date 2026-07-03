@@ -1,4 +1,4 @@
-from livesubs.diarize import SpeakerSegment, _StreamingState
+from autosubs.diarize import SpeakerSegment, _StreamingState
 
 
 class TestSpeakerSegment:
