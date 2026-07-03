@@ -9,7 +9,7 @@
 
 ## ¿Qué hace?
 
-Mientras mirás un stream de YouTube en MPV, **AutoSubs transcribe el audio, lo traduce, y te muestra subtítulos en tu idioma** — todo en vivo. Pensado para consumir contenido de creadores en otros idiomas (en mi caso, streamers japoneses) sin esperar a que alguien los traduzca.
+Mientras miras un stream de YouTube en MPV, **AutoSubs transcribe el audio, lo traduce, y te muestra subtítulos en tu idioma** — todo en vivo. Pensado para consumir contenido de creadores en otros idiomas (en mi caso, streamers japoneses) sin esperar a que alguien los traduzca.
 
 ```
 ┌──────────┐    ┌──────┐    ┌─────┐    ┌────────────┐    ┌─────┐    ┌─────┐
@@ -27,7 +27,7 @@ Este proyecto **no es un wrapper de Whisper**. Es un sistema que aprendí a hace
 
 - 🔁 **Multi-provider con fallback automático**: cuando Gemini Pro tira `503 high demand`, el pipeline cambia transparentemente a `gpt-4o-transcribe` sin perder chunks
 - 🚦 **Circuit breaker**: 5 fallos consecutivos = saca a Gemini de juego por 5min (evita ~21s de retries por chunk)
-- 💾 **Cache incremental de SRT**: si interrumpís, la próxima corrida continúa exacto donde quedó
+- 💾 **Cache incremental de SRT**: si interrumpes, la próxima corrida continúa exacto donde quedó
 - 🔧 **Recuperación de gaps** (`--fill-gaps`): si Gemini perdió chunks durante un outage, re-transcribe los gaps del video local con gpt-4o (estable)
 - 💰 **Cost engineering**: ~$0.18-$0.43 por stream de 2h según setup. Documentado con [benchmarks reales](docs/)
 - 📊 **Decisiones documentadas**: cada elección de modelo está justificada con [datos](docs/transcription-benchmark-2026-04.md), no marketing
@@ -129,7 +129,7 @@ uv run autosubs "URL" --gpt-model deepseek/deepseek-chat       # traductor barat
 |------|-----------|---------|
 | Async runtime | `asyncio` + `TaskGroup` | I/O-bound pipeline con multiple workers |
 | ASR APIs | OpenAI, Google AI (Gemini), HuggingFace | Multi-provider con [benchmarks](docs/transcription-benchmark-2026-04.md) |
-| ASR local | `faster-whisper` + CTranslate2 (CUDA) | Backup gratis cuando no querés gastar API |
+| ASR local | `faster-whisper` + CTranslate2 (CUDA) | Backup gratis cuando no quieres gastar API |
 | LLM translator | OpenAI, Anthropic, OpenRouter (DeepSeek/Kimi/Gemini) | [Comparados](docs/translation-benchmark-2026-04.md) |
 | Audio I/O | `ffmpeg` (subprocess), WebRTC VAD | Chunking inteligente por silencio |
 | Player | MPV via IPC (JSON-RPC sobre named pipe) | Subtítulos live update |
@@ -144,7 +144,7 @@ uv run autosubs "URL" --gpt-model deepseek/deepseek-chat       # traductor barat
 | Decisión | Por qué |
 |---------|---------|
 | Setup A (Gemini Pro + Claude Haiku) como default | Mejor calidad-precio en benchmark vs gpt-4o + gpt-4.1 |
-| Cache de SRT incremental con `append=True` | Si interrumpís, continuás exacto donde quedó. Sin SRTs incompletos pretendiendo ser completos |
+| Cache de SRT incremental con `append=True` | Si interrumpes, continúas exacto donde quedó. Sin SRTs incompletos pretendiendo ser completos |
 | Routing por nombre de modelo (`/` → OpenRouter) | 1 cliente OpenAI-compatible cubre 4+ providers sin SDKs separados |
 | Circuit breaker sobre fallback simple | Outages persistentes saturaban retries; ahora skipea Gemini por 5min después de 5 fails |
 | Subprocess isolation para ctranslate2 | CUDA cleanup en Windows abortaba el proceso. `os._exit(0)` + subprocess lo evita |

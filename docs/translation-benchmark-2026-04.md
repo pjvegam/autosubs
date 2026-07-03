@@ -71,7 +71,7 @@ Haiku:    "Eh, ¿dónde está el porcentaje de grasa corporal?"    ✅
 **Claude Haiku 4.5** via OpenRouter — mejor calidad confirmada, 30% más barato que gpt-4.1, viable en real-time.
 
 ### Para post-batch de VODs
-**DeepSeek V3** — 5x más barato que Haiku. El error ocasional "Jim" es tolerable en batch (donde podés revisar).
+**DeepSeek V3** — 5x más barato que Haiku. El error ocasional "Jim" es tolerable en batch (donde puedes revisar).
 
 ### Como fallback
 **gpt-4.1** — sigue funcional, calidad alta, sin errores graves observados.

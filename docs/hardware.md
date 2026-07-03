@@ -14,7 +14,7 @@
 
 ⚠️ **PyTorch stable NO funciona con Blackwell sm_120 al momento.**
 
-Necesitás:
+Necesitas:
 ```bash
 uv pip install --pre torch torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
 ```

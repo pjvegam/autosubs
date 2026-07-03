@@ -280,6 +280,72 @@ wheels = [
 ]
 
 [[package]]
+name = "autosubs"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
+    { name = "openai" },
+    { name = "pyaudiowpatch" },
+    { name = "python-dotenv" },
+    { name = "webrtcvad-wheels" },
+    { name = "yt-dlp" },
+]
+
+[package.optional-dependencies]
+cohere-asr = [
+    { name = "accelerate" },
+    { name = "librosa" },
+    { name = "transformers" },
+]
+diarize = [
+    { name = "nemo-toolkit", extra = ["asr"] },
+    { name = "torch" },
+    { name = "torchaudio" },
+]
+gemini = [
+    { name = "google-genai" },
+]
+local-whisper = [
+    { name = "faster-whisper" },
+    { name = "nvidia-cublas-cu12" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", marker = "extra == 'cohere-asr'", specifier = ">=0.30" },
+    { name = "audioop-lts", marker = "python_full_version >= '3.13'", specifier = ">=0.2.2" },
+    { name = "faster-whisper", marker = "extra == 'local-whisper'", specifier = ">=1.1.0" },
+    { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.0" },
+    { name = "librosa", marker = "extra == 'cohere-asr'", specifier = ">=0.10" },
+    { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'diarize'", specifier = ">=2.0" },
+    { name = "nvidia-cublas-cu12", marker = "extra == 'local-whisper'", specifier = ">=12.4" },
+    { name = "openai", specifier = ">=2.21.0" },
+    { name = "pyaudiowpatch", specifier = ">=0.2.12.8" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "torch", marker = "extra == 'diarize'", specifier = ">=2.0" },
+    { name = "torchaudio", marker = "extra == 'diarize'", specifier = ">=2.0" },
+    { name = "transformers", marker = "extra == 'cohere-asr'", specifier = ">=4.46" },
+    { name = "webrtcvad-wheels", specifier = ">=2.0.14" },
+    { name = "yt-dlp", specifier = ">=2026.6.9" },
+]
+provides-extras = ["diarize", "local-whisper", "gemini", "cohere-asr"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "ruff", specifier = ">=0.15.2" },
+]
+
+[[package]]
 name = "av"
 version = "16.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1800,72 +1866,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/23/76/781fa0a40cc74cf255b2be0be72d7562e3a4a8c9dc6e95b2b428217aa78c/lilcom-1.8.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:738e10878b86a59ddb706fd55206dd186c5ff1b1d8640e79ceac2d3e25d65537", size = 87055, upload-time = "2026-01-15T01:51:36.692Z" },
     { url = "https://files.pythonhosted.org/packages/2e/2a/6705814902bb8c236a7c1d46dcb4331288d39b877c6d819f93495cac8688/lilcom-1.8.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:150ee54632ae366f0c41f8136dede1d3f55286f7b7137b2c4de45d52db16a333", size = 93529, upload-time = "2026-01-20T00:28:42.97Z" },
     { url = "https://files.pythonhosted.org/packages/09/cc/14073ccde224da3a4f4284f38d0220b47b09a059d1181af576ac7cb69157/lilcom-1.8.2-cp314-cp314-win_amd64.whl", hash = "sha256:174a284e973b6b57b9432c55978413c9b8a3112833e7cc890f5f5209a8a665c9", size = 71614, upload-time = "2026-01-15T01:49:04.606Z" },
-]
-
-[[package]]
-name = "livesubs"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
-    { name = "openai" },
-    { name = "pyaudiowpatch" },
-    { name = "python-dotenv" },
-    { name = "webrtcvad-wheels" },
-    { name = "yt-dlp" },
-]
-
-[package.optional-dependencies]
-cohere-asr = [
-    { name = "accelerate" },
-    { name = "librosa" },
-    { name = "transformers" },
-]
-diarize = [
-    { name = "nemo-toolkit", extra = ["asr"] },
-    { name = "torch" },
-    { name = "torchaudio" },
-]
-gemini = [
-    { name = "google-genai" },
-]
-local-whisper = [
-    { name = "faster-whisper" },
-    { name = "nvidia-cublas-cu12" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "accelerate", marker = "extra == 'cohere-asr'", specifier = ">=0.30" },
-    { name = "audioop-lts", marker = "python_full_version >= '3.13'", specifier = ">=0.2.2" },
-    { name = "faster-whisper", marker = "extra == 'local-whisper'", specifier = ">=1.1.0" },
-    { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.0" },
-    { name = "librosa", marker = "extra == 'cohere-asr'", specifier = ">=0.10" },
-    { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'diarize'", specifier = ">=2.0" },
-    { name = "nvidia-cublas-cu12", marker = "extra == 'local-whisper'", specifier = ">=12.4" },
-    { name = "openai", specifier = ">=2.21.0" },
-    { name = "pyaudiowpatch", specifier = ">=0.2.12.8" },
-    { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "torch", marker = "extra == 'diarize'", specifier = ">=2.0" },
-    { name = "torchaudio", marker = "extra == 'diarize'", specifier = ">=2.0" },
-    { name = "transformers", marker = "extra == 'cohere-asr'", specifier = ">=4.46" },
-    { name = "webrtcvad-wheels", specifier = ">=2.0.14" },
-    { name = "yt-dlp", specifier = ">=2026.6.9" },
-]
-provides-extras = ["diarize", "local-whisper", "gemini", "cohere-asr"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-asyncio", specifier = ">=1.3.0" },
-    { name = "ruff", specifier = ">=0.15.2" },
 ]
 
 [[package]]

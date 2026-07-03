@@ -89,7 +89,7 @@ $0.32/$0.89 per M tokens. ~$0.05/2h = 25 CLP/hora. **Más barato que cualquier o
 - `ジム` (gym) → traducido como "Jim" (nombre persona)
 
 ### Cuándo SÍ usar
-Post-batch de contenido técnico/no-coloquial. Donde podés revisar antes de publicar.
+Post-batch de contenido técnico/no-coloquial. Donde puedes revisar antes de publicar.
 
 ### Por qué NO usar para live
 - Errores no recuperables en stream en vivo

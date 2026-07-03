@@ -69,7 +69,7 @@ Registro de decisiones tomadas con justificación. Sirve para cuando alguien (o 
 
 ## 2026-04-24: OpenRouter como agregador de traductores
 
-**Contexto**: Querés probar DeepSeek, Kimi, Claude Haiku sin abrir 3 cuentas.
+**Contexto**: Quieres probar DeepSeek, Kimi, Claude Haiku sin abrir 3 cuentas.
 
 **Decisión**: Usar OpenRouter como único provider.
 
@@ -84,7 +84,7 @@ Registro de decisiones tomadas con justificación. Sirve para cuando alguien (o 
 - Rate limits de free tier providers (DeepInfra para DeepSeek V4 Flash)
 - 1 API key = 1 punto de falla
 
-**Cuándo reconsiderar**: Si necesitás throughput muy alto, BYOK directo da mejores rate limits.
+**Cuándo reconsiderar**: Si necesitas throughput muy alto, BYOK directo da mejores rate limits.
 
 ---
 
