@@ -11,14 +11,14 @@
 
 Mientras miras un stream de YouTube en MPV, **AutoSubs transcribe el audio, lo traduce, y te muestra subtítulos en tu idioma** — todo en vivo. Pensado para consumir contenido de creadores en otros idiomas (en mi caso, streamers japoneses) sin esperar a que alguien los traduzca.
 
-```
-┌──────────┐    ┌──────┐    ┌─────┐    ┌────────────┐    ┌─────┐    ┌─────┐
-│ YouTube  │───▶│yt-dlp│───▶│ VAD │───▶│ ASR (chunk)│───▶│ LLM │───▶│ SRT │──▶ MPV
-│ stream   │    │  +   │    │     │    │            │    │     │    │     │
-└──────────┘    │ffmpeg│    │WebRTC│   │ Gemini Pro │    │Claude│   │live │
-                └──────┘    └─────┘    │ o gpt-4o-* │    │Haiku │   │write│
-                                       │ o local    │    │o GPT │   └─────┘
-                                       └────────────┘    └─────┘
+```mermaid
+flowchart LR
+    A[YouTube stream] --> B[yt-dlp + ffmpeg]
+    B --> C[VAD<br/>WebRTC]
+    C --> D[ASR chunk<br/>Gemini Pro / gpt-4o / local]
+    D --> E[LLM translator<br/>Claude Haiku / GPT]
+    E --> F[SRT<br/>live write]
+    F --> G[MPV]
 ```
 
 ## Por qué importa (lo que muestro acá)
