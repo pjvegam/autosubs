@@ -35,7 +35,7 @@ Este proyecto **no es un wrapper de Whisper**. Es un sistema que aprendí a hace
 
 ## Requisitos del sistema
 
-Además de Python 3.13+ y [uv](https://docs.astral.sh/uv/), necesitás estos binarios nativos instalados (no vienen por pip):
+Además de Python 3.13+ y [uv](https://docs.astral.sh/uv/), necesitas estos binarios nativos instalados (no vienen por pip):
 
 | Binario | Para qué | Obligatorio |
 |---------|----------|-------------|
