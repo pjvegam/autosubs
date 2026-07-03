@@ -3,7 +3,7 @@
 > Subtítulos traducidos en tiempo real para YouTube. Multi-provider ASR + LLM translation con fallback automático, circuit breaker, cache incremental y recuperación de transcripciones perdidas.
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
-[![Tests 213 passing](https://img.shields.io/badge/tests-213%20passing-brightgreen.svg)](#tests)
+[![CI](https://github.com/pjvegam/autosubs/actions/workflows/ci.yml/badge.svg)](https://github.com/pjvegam/autosubs/actions/workflows/ci.yml)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Style: ruff](https://img.shields.io/badge/style-ruff-orange.svg)](https://github.com/astral-sh/ruff)
 
