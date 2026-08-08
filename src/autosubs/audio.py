@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import queue
 import subprocess
@@ -156,22 +157,31 @@ class AudioSegmenter:
             self._chunk_queue.put(None)
 
     async def _log_ffmpeg_status(self) -> None:
-        """Lee stderr de ffmpeg y loguea info de diagnostico."""
-        if self.process is not None:
-            rc = self.process.returncode
-            alive = rc is None
-            logger.warning("ffmpeg: alive=%s, returncode=%s", alive, rc)
-            if not alive and self.process.stderr:
-                try:
-                    data = await asyncio.wait_for(
-                        self.process.stderr.read(65536), timeout=2,
-                    )
-                    if isinstance(data, bytes):
-                        text = data.decode(errors="replace").strip()
-                        for line in text.splitlines()[-5:]:
-                            logger.warning("ffmpeg stderr: %s", line)
-                except (TimeoutError, OSError, TypeError):
-                    pass
+        """Lee stderr de ffmpeg y loguea info de diagnostico.
+
+        Se llama despues del EOF de stdout. En ese momento returncode todavia
+        suele ser None aunque ffmpeg ya haya fallado, asi que hay que esperarlo:
+        de lo contrario el stderr —la unica pista de por que salieron 0 chunks—
+        se descarta justo cuando hace falta.
+        """
+        if self.process is None:
+            return
+
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self.process.wait(), timeout=2)
+
+        rc = self.process.returncode
+        logger.warning("ffmpeg: alive=%s, returncode=%s", rc is None, rc)
+
+        if self.process.stderr is None:
+            return
+        try:
+            data = await asyncio.wait_for(self.process.stderr.read(65536), timeout=2)
+        except (TimeoutError, OSError, TypeError):
+            return
+        if isinstance(data, bytes) and (text := data.decode(errors="replace").strip()):
+            for line in text.splitlines()[-5:]:
+                logger.warning("ffmpeg stderr: %s", line)
 
     async def poll_chunks(self, async_queue: asyncio.Queue) -> None:
         """Lee PCM de stdout de ffmpeg, segmenta con VAD, encola AudioChunks."""

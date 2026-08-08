@@ -47,6 +47,19 @@ logger = logging.getLogger(__name__)
 
 MIN_SPEECH_RATIO = 0.15
 
+
+def _video_download_complete(path: Path) -> bool:
+    """True si el .mkv es una descarga terminada y no una a medias.
+
+    yt-dlp mantiene un `<archivo>.ytdl` con el indice del fragmento en curso y
+    lo borra al terminar. Sin ese chequeo, un .mkv parcial pasa por cache
+    completo: la descarga no se reanuda nunca y el audio se lee de un archivo
+    truncado, con lo que la transcripcion se corta a los pocos minutos.
+    """
+    if not path.exists():
+        return False
+    return not path.with_name(f"{path.name}.ytdl").exists()
+
 # Circuit breaker para Gemini: si falla N veces consecutivas, lo "sacamos de
 # juego" por X minutos y todas las requests van directo a gpt-4o-transcribe.
 _GEMINI_FAIL_THRESHOLD = 5
@@ -605,7 +618,7 @@ async def _run_cached_pipeline(
 
     player = MPVPlayer(config.ipc_pipe)
     try:
-        if cached_video and cached_video.exists():
+        if cached_video and _video_download_complete(cached_video):
             logger.info("Video encontrado en cache: %s", cached_video.name)
             await player.start(str(cached_video))
             await player.connect()
@@ -938,18 +951,26 @@ async def _run_mpv_pipeline(
     video_cached = False
     if not live and video_id:
         cached_video = LOGS_DIR / f"{video_id}.mkv"
-        if cached_video.exists():
+        if _video_download_complete(cached_video):
             logger.info("Video encontrado en cache: %s", cached_video.name)
             video_cached = True
-        elif vod_start > 0:
-            logger.info("Descargando video para seek a %ds...", vod_start)
-            await download_vod(config.url, str(cached_video))
-            video_cached = True
         else:
-            logger.info("Descargando VOD a cache en background: %s", cached_video.name)
-            bg_download = asyncio.create_task(
-                download_vod(config.url, str(cached_video)),
-            )
+            if cached_video.exists():
+                # Descarga interrumpida: yt-dlp reanuda desde el fragmento
+                # anotado en el .ytdl, no hay que borrar lo ya bajado.
+                logger.info(
+                    "Descarga incompleta en cache (%.0f MB), reanudando: %s",
+                    cached_video.stat().st_size / (1024 * 1024), cached_video.name,
+                )
+            if vod_start > 0:
+                logger.info("Descargando video para seek a %ds...", vod_start)
+                await download_vod(config.url, str(cached_video))
+                video_cached = True
+            else:
+                logger.info("Descargando VOD a cache en background: %s", cached_video.name)
+                bg_download = asyncio.create_task(
+                    download_vod(config.url, str(cached_video)),
+                )
 
     # Cliente OpenAI para transcripcion API (gpt-4o-transcribe etc).
     # Cliente potencialmente OpenRouter para traduccion segun gpt_model.
