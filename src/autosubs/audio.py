@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 import queue
 import subprocess
 import threading
@@ -10,6 +11,30 @@ from pathlib import Path
 from autosubs.vad import AudioChunk, VadSegmenter
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_ca_bundle() -> None:
+    """Da a ffmpeg un almacen de certificados si su TLS es OpenSSL.
+
+    En Windows los builds de ffmpeg con --enable-openssl (el que trae MPV, por
+    ejemplo) no tienen almacen de certificados: cualquier https falla con
+    "error:0A000086 ... I/O error" y el audio del VOD sale en 0 chunks. Los
+    builds con --enable-schannel usan el almacen de Windows y no lo necesitan,
+    pero ignoran esta variable sin efecto alguno.
+
+    certifi llega como dependencia transitiva de openai/httpx, asi que esto
+    funciona en cualquier clon del repo sin instalar nada aparte. No se pisa un
+    SSL_CERT_FILE que el usuario ya haya configurado.
+    """
+    if os.environ.get("SSL_CERT_FILE"):
+        return
+    try:
+        import certifi
+    except ImportError:
+        logger.debug("certifi no disponible, se deja el TLS de ffmpeg como este")
+        return
+    os.environ["SSL_CERT_FILE"] = certifi.where()
+    logger.debug("SSL_CERT_FILE -> %s", certifi.where())
 
 # Leer ~1s de audio por iteracion (16kHz mono 16-bit)
 READ_CHUNK_BYTES = 16000 * 2
@@ -88,6 +113,7 @@ class AudioSegmenter:
     async def start(self) -> None:
         """Lanza ffmpeg leyendo de URL directa, output PCM a stdout."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        ensure_ca_bundle()
         cmd = self._ffmpeg_continuous_args(self.audio_url)
         logger.info("Lanzando ffmpeg para audio continuo...")
         self.process = await asyncio.create_subprocess_exec(
@@ -101,6 +127,7 @@ class AudioSegmenter:
         from autosubs.stream import ytdlp_pipe_audio_cmd
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        ensure_ca_bundle()
         ytdlp_cmd = ytdlp_pipe_audio_cmd(url)
         ffmpeg_cmd = self._ffmpeg_continuous_args("pipe:0")
 
