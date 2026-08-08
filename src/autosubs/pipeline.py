@@ -60,6 +60,55 @@ def _video_download_complete(path: Path) -> bool:
         return False
     return not path.with_name(f"{path.name}.ytdl").exists()
 
+
+async def _downloaded_seconds(path: Path) -> float:
+    """Segundos de video ya disponibles en una descarga en curso.
+
+    yt-dlp va concatenando fragmentos MPEG-TS, que ffprobe lee sin problema
+    aunque el archivo siga creciendo. Retorna 0.0 si todavia no es legible.
+    """
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await proc.communicate()
+    if proc.returncode != 0:
+        return 0.0
+    try:
+        return float(stdout.decode().strip())
+    except ValueError:
+        return 0.0
+
+
+async def _wait_until_downloaded(
+    path: Path, target_seconds: float, download: asyncio.Task, *, margin: float = 30.0,
+) -> bool:
+    """Espera a que la descarga cubra target_seconds en vez del VOD entero.
+
+    Saltar a un punto solo necesita el video hasta ese punto: esperar el archivo
+    completo son horas para un VOD largo. Retorna False si la descarga muere
+    antes de llegar.
+    """
+    needed = target_seconds + margin
+    while True:
+        if (available := await _downloaded_seconds(path)) >= needed:
+            logger.info("Descargado hasta %.0fs, suficiente para saltar", available)
+            return True
+        if download.done():
+            # Termino la descarga: o esta completo o fallo
+            return await _downloaded_seconds(path) >= target_seconds
+        logger.info(
+            "Esperando descarga: %.0fs de %.0fs necesarios...", available, needed,
+        )
+        await asyncio.sleep(5)
+
 # Circuit breaker para Gemini: si falla N veces consecutivas, lo "sacamos de
 # juego" por X minutos y todas las requests van directo a gpt-4o-transcribe.
 _GEMINI_FAIL_THRESHOLD = 5
@@ -943,17 +992,21 @@ async def _run_mpv_pipeline(
         config.url,
     )
 
-    # Video local: necesario para seek, opcional como cache.
-    # video_cached marca si el archivo esta COMPLETO y se puede leer de forma
-    # segura. Una descarga en background no cuenta: yt-dlp esta escribiendo
-    # (o reiniciando) el .mkv y leerlo daria 0 chunks o datos corruptos.
+    # Video local: necesario para seek, opcional como cache. Dos condiciones
+    # distintas, no confundirlas:
+    #   video_complete  -> el archivo esta entero y se puede leer el audio de el
+    #   video_playable  -> alcanza para que MPV salte al punto pedido, aunque
+    #                      la descarga siga en curso
+    # El audio nunca sale de un archivo a medias: ffmpeg llegaria al final de lo
+    # descargado y cortaria la transcripcion ahi.
     cached_video: Path | None = None
-    video_cached = False
+    video_complete = False
+    video_playable = False
     if not live and video_id:
         cached_video = LOGS_DIR / f"{video_id}.mkv"
         if _video_download_complete(cached_video):
             logger.info("Video encontrado en cache: %s", cached_video.name)
-            video_cached = True
+            video_complete = video_playable = True
         else:
             if cached_video.exists():
                 # Descarga interrumpida: yt-dlp reanuda desde el fragmento
@@ -962,15 +1015,19 @@ async def _run_mpv_pipeline(
                     "Descarga incompleta en cache (%.0f MB), reanudando: %s",
                     cached_video.stat().st_size / (1024 * 1024), cached_video.name,
                 )
+            logger.info("Descargando VOD a cache en background: %s", cached_video.name)
+            bg_download = asyncio.create_task(
+                download_vod(config.url, str(cached_video)),
+            )
             if vod_start > 0:
-                logger.info("Descargando video para seek a %ds...", vod_start)
-                await download_vod(config.url, str(cached_video))
-                video_cached = True
-            else:
-                logger.info("Descargando VOD a cache en background: %s", cached_video.name)
-                bg_download = asyncio.create_task(
-                    download_vod(config.url, str(cached_video)),
+                # Solo hace falta el video hasta el punto pedido, no entero
+                video_playable = await _wait_until_downloaded(
+                    cached_video, vod_start, bg_download,
                 )
+                if not video_playable:
+                    logger.warning(
+                        "La descarga no llego a %ds, MPV reproduce del stream", vod_start,
+                    )
 
     # Cliente OpenAI para transcripcion API (gpt-4o-transcribe etc).
     # Cliente potencialmente OpenRouter para traduccion segun gpt_model.
@@ -993,7 +1050,7 @@ async def _run_mpv_pipeline(
     # Audio: archivo local solo si esta COMPLETO; si hay descarga en background
     # ffmpeg lee del stream (la URL) para no chocar con yt-dlp escribiendo el .mkv
     audio_source = ffmpeg_audio_url
-    if video_cached:
+    if video_complete:
         audio_source = str(cached_video)
 
     segmenter = AudioSegmenter(
@@ -1011,7 +1068,7 @@ async def _run_mpv_pipeline(
     transcriber = _transcribe_worker if live or local_model else _transcribe_worker_parallel
 
     try:
-        use_local = video_cached and vod_start > 0
+        use_local = video_playable and vod_start > 0
         if use_local:
             await player.start(str(cached_video))
         else:
