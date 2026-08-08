@@ -47,6 +47,21 @@ logger = logging.getLogger(__name__)
 
 MIN_SPEECH_RATIO = 0.15
 
+
+def _video_download_complete(path: Path) -> bool:
+    """True si el .mkv es una descarga terminada y no una a medias.
+
+    yt-dlp mantiene un `<archivo>.ytdl` con el indice del fragmento en curso y
+    lo borra al terminar. Sin ese chequeo, un .mkv parcial pasa por cache
+    completo: la descarga no se reanuda nunca y el audio se lee de un archivo
+    truncado, con lo que la transcripcion se corta a los pocos minutos.
+    """
+    if not path.exists():
+        return False
+    return not path.with_name(f"{path.name}.ytdl").exists()
+
+
+
 # Circuit breaker para Gemini: si falla N veces consecutivas, lo "sacamos de
 # juego" por X minutos y todas las requests van directo a gpt-4o-transcribe.
 _GEMINI_FAIL_THRESHOLD = 5
@@ -605,16 +620,12 @@ async def _run_cached_pipeline(
 
     player = MPVPlayer(config.ipc_pipe)
     try:
-        if cached_video and cached_video.exists():
+        if cached_video and _video_download_complete(cached_video):
             logger.info("Video encontrado en cache: %s", cached_video.name)
-            await player.start(str(cached_video))
+            # El SRT tiene timestamps absolutos: MPV arranca ya en la posicion
+            await player.start(str(cached_video), start_time=config.start_time)
             await player.connect()
             await player.sub_add(srt_path)
-            # SRT tiene timestamps absolutos, seekear video a la posicion
-            if config.start_time > 0:
-                await player.command(
-                    "set_property", "time-pos", str(config.start_time),
-                )
         else:
             logger.info("Video no cacheado, obteniendo URLs del stream...")
             video_url, mpv_audio_url, _ = await get_stream_urls(config.url)
@@ -930,22 +941,26 @@ async def _run_mpv_pipeline(
         config.url,
     )
 
-    # Video local: necesario para seek, opcional como cache.
-    # video_cached marca si el archivo esta COMPLETO y se puede leer de forma
-    # segura. Una descarga en background no cuenta: yt-dlp esta escribiendo
-    # (o reiniciando) el .mkv y leerlo daria 0 chunks o datos corruptos.
+    # Video local: solo se usa si la descarga esta ENTERA. Un .mkv a medias
+    # limita la reproduccion a lo ya bajado, cuando del stream esta el VOD
+    # completo disponible desde el primer segundo; la descarga sigue por detras
+    # para que la proxima vez si haya cache. Leer el audio de un archivo parcial
+    # ademas cortaria la transcripcion al llegar al final de lo descargado.
     cached_video: Path | None = None
-    video_cached = False
+    video_complete = False
     if not live and video_id:
         cached_video = LOGS_DIR / f"{video_id}.mkv"
-        if cached_video.exists():
+        if _video_download_complete(cached_video):
             logger.info("Video encontrado en cache: %s", cached_video.name)
-            video_cached = True
-        elif vod_start > 0:
-            logger.info("Descargando video para seek a %ds...", vod_start)
-            await download_vod(config.url, str(cached_video))
-            video_cached = True
+            video_complete = True
         else:
+            if cached_video.exists():
+                # Descarga interrumpida: yt-dlp reanuda desde el fragmento
+                # anotado en el .ytdl, no hay que borrar lo ya bajado.
+                logger.info(
+                    "Descarga incompleta en cache (%.0f MB), reanudando: %s",
+                    cached_video.stat().st_size / (1024 * 1024), cached_video.name,
+                )
             logger.info("Descargando VOD a cache en background: %s", cached_video.name)
             bg_download = asyncio.create_task(
                 download_vod(config.url, str(cached_video)),
@@ -972,7 +987,7 @@ async def _run_mpv_pipeline(
     # Audio: archivo local solo si esta COMPLETO; si hay descarga en background
     # ffmpeg lee del stream (la URL) para no chocar con yt-dlp escribiendo el .mkv
     audio_source = ffmpeg_audio_url
-    if video_cached:
+    if video_complete:
         audio_source = str(cached_video)
 
     segmenter = AudioSegmenter(
@@ -990,11 +1005,13 @@ async def _run_mpv_pipeline(
     transcriber = _transcribe_worker if live or local_model else _transcribe_worker_parallel
 
     try:
-        use_local = video_cached and vod_start > 0
+        use_local = video_complete and vod_start > 0
         if use_local:
-            await player.start(str(cached_video))
+            await player.start(str(cached_video), start_time=vod_start)
         else:
-            await player.start(video_url, audio_url=mpv_audio_url, live=live)
+            await player.start(
+                video_url, audio_url=mpv_audio_url, live=live, start_time=vod_start,
+            )
         await player.connect()
         if live:
             await player.setup_osd_for_subs()
@@ -1003,8 +1020,6 @@ async def _run_mpv_pipeline(
         if cache_end > 0:
             await player.sub_add(srt_path)
 
-        if vod_start > 0:
-            await player.command("set_property", "time-pos", str(vod_start))
         await segmenter.start()
 
         # Sincronizar timestamps SRT con la posicion del video en MPV.
@@ -1055,16 +1070,15 @@ async def _run_mpv_pipeline(
             await diarizer.stop()
         await segmenter.stop()
         await player.close()
-        # Esperar descarga en background si sigue corriendo
+        # Al cerrar el video se corta la descarga: hacerla terminar podian ser
+        # horas de VOD con la ventana ya cerrada. Lo bajado se conserva y la
+        # proxima ejecucion reanuda desde el fragmento anotado en el .ytdl.
         if bg_download is not None:
             if not bg_download.done():
-                logger.info("Esperando descarga de video en background...")
-                try:
-                    await asyncio.wait_for(bg_download, timeout=300)
-                    logger.info("Video cacheado en: %s", cached_video)
-                except (TimeoutError, Exception) as dl_err:
-                    logger.warning("Descarga en background fallo: %s", dl_err)
-                    bg_download.cancel()
+                logger.info("Deteniendo descarga en background (se reanudara)")
+                bg_download.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await bg_download
             elif bg_download.exception() is None:
                 logger.info("Video cacheado en: %s", cached_video)
             else:

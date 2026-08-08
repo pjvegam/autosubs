@@ -1,10 +1,12 @@
+import asyncio
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from autosubs.stream import (
     _ytdlp_base_args,
+    download_vod,
     get_audio_url,
     get_stream_info,
     get_stream_urls,
@@ -20,6 +22,63 @@ def _make_process(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0)
     proc.communicate.return_value = (stdout, stderr)
     proc.returncode = returncode
     return proc
+
+
+class TestDownloadVodCancel:
+    """Cancelar la task debe matar a yt-dlp, no dejarlo descargando huerfano."""
+
+    @staticmethod
+    def _process(*, dies_on_terminate: bool = True) -> MagicMock:
+        """yt-dlp descargando: el primer wait() no retorna nunca."""
+        proc = MagicMock()
+        proc.returncode = None
+        calls = {"n": 0}
+
+        async def _wait() -> int:
+            calls["n"] += 1
+            if calls["n"] == 1 or not dies_on_terminate:
+                await asyncio.Event().wait()
+            proc.returncode = 0
+            return 0
+
+        proc.wait = _wait
+        return proc
+
+    @staticmethod
+    async def _cancel_during_download(proc: MagicMock, tmp_path) -> None:
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+            task = asyncio.create_task(
+                download_vod("https://youtu.be/x", str(tmp_path / "v.mkv")),
+            )
+            await asyncio.sleep(0)  # deja que arranque y quede descargando
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    async def test_terminates_ytdlp_on_cancel(self, tmp_path):
+        proc = self._process()
+        await self._cancel_during_download(proc, tmp_path)
+        proc.terminate.assert_called_once()
+        proc.kill.assert_not_called()
+
+    async def test_kills_ytdlp_if_terminate_is_ignored(self, tmp_path):
+        proc = self._process(dies_on_terminate=False)
+
+        async def _expire(coro, **_kwargs):
+            coro.close()  # sin esto queda una corrutina sin await
+            raise TimeoutError
+
+        with patch("autosubs.stream.asyncio.wait_for", _expire):
+            await self._cancel_during_download(proc, tmp_path)
+
+        proc.terminate.assert_called_once()
+        proc.kill.assert_called_once()
+
+    async def test_survives_process_already_gone(self, tmp_path):
+        proc = self._process()
+        proc.terminate.side_effect = ProcessLookupError
+        # No debe propagar ProcessLookupError, solo CancelledError
+        await self._cancel_during_download(proc, tmp_path)
 
 
 class TestCookiesBrowser:

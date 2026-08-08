@@ -1,10 +1,36 @@
 import asyncio
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from autosubs.audio import AudioSegmenter
+from autosubs.audio import AudioSegmenter, ensure_ca_bundle
 from autosubs.vad import AudioChunk
+
+
+class TestEnsureCaBundle:
+    def test_sets_ssl_cert_file_from_certifi(self, monkeypatch):
+        import certifi
+
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        ensure_ca_bundle()
+        assert Path(os.environ["SSL_CERT_FILE"]) == Path(certifi.where())
+
+    def test_bundle_file_actually_exists(self, monkeypatch):
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        ensure_ca_bundle()
+        assert Path(os.environ["SSL_CERT_FILE"]).is_file()
+
+    def test_does_not_override_user_setting(self, monkeypatch):
+        monkeypatch.setenv("SSL_CERT_FILE", "/ruta/del/usuario.pem")
+        ensure_ca_bundle()
+        assert os.environ["SSL_CERT_FILE"] == "/ruta/del/usuario.pem"
+
+    def test_survives_missing_certifi(self, monkeypatch):
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        with patch.dict("sys.modules", {"certifi": None}):
+            ensure_ca_bundle()  # no debe lanzar
+        assert "SSL_CERT_FILE" not in os.environ
 
 
 class TestAudioSegmenter:

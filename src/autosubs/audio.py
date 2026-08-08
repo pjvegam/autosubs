@@ -1,5 +1,7 @@
 import asyncio
+import contextlib
 import logging
+import os
 import queue
 import subprocess
 import threading
@@ -9,6 +11,30 @@ from pathlib import Path
 from autosubs.vad import AudioChunk, VadSegmenter
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_ca_bundle() -> None:
+    """Da a ffmpeg un almacen de certificados si su TLS es OpenSSL.
+
+    En Windows los builds de ffmpeg con --enable-openssl (el que trae MPV, por
+    ejemplo) no tienen almacen de certificados: cualquier https falla con
+    "error:0A000086 ... I/O error" y el audio del VOD sale en 0 chunks. Los
+    builds con --enable-schannel usan el almacen de Windows y no lo necesitan,
+    pero ignoran esta variable sin efecto alguno.
+
+    certifi llega como dependencia transitiva de openai/httpx, asi que esto
+    funciona en cualquier clon del repo sin instalar nada aparte. No se pisa un
+    SSL_CERT_FILE que el usuario ya haya configurado.
+    """
+    if os.environ.get("SSL_CERT_FILE"):
+        return
+    try:
+        import certifi
+    except ImportError:
+        logger.debug("certifi no disponible, se deja el TLS de ffmpeg como este")
+        return
+    os.environ["SSL_CERT_FILE"] = certifi.where()
+    logger.debug("SSL_CERT_FILE -> %s", certifi.where())
 
 # Leer ~1s de audio por iteracion (16kHz mono 16-bit)
 READ_CHUNK_BYTES = 16000 * 2
@@ -87,6 +113,7 @@ class AudioSegmenter:
     async def start(self) -> None:
         """Lanza ffmpeg leyendo de URL directa, output PCM a stdout."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        ensure_ca_bundle()
         cmd = self._ffmpeg_continuous_args(self.audio_url)
         logger.info("Lanzando ffmpeg para audio continuo...")
         self.process = await asyncio.create_subprocess_exec(
@@ -100,6 +127,7 @@ class AudioSegmenter:
         from autosubs.stream import ytdlp_pipe_audio_cmd
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        ensure_ca_bundle()
         ytdlp_cmd = ytdlp_pipe_audio_cmd(url)
         ffmpeg_cmd = self._ffmpeg_continuous_args("pipe:0")
 
@@ -156,22 +184,31 @@ class AudioSegmenter:
             self._chunk_queue.put(None)
 
     async def _log_ffmpeg_status(self) -> None:
-        """Lee stderr de ffmpeg y loguea info de diagnostico."""
-        if self.process is not None:
-            rc = self.process.returncode
-            alive = rc is None
-            logger.warning("ffmpeg: alive=%s, returncode=%s", alive, rc)
-            if not alive and self.process.stderr:
-                try:
-                    data = await asyncio.wait_for(
-                        self.process.stderr.read(65536), timeout=2,
-                    )
-                    if isinstance(data, bytes):
-                        text = data.decode(errors="replace").strip()
-                        for line in text.splitlines()[-5:]:
-                            logger.warning("ffmpeg stderr: %s", line)
-                except (TimeoutError, OSError, TypeError):
-                    pass
+        """Lee stderr de ffmpeg y loguea info de diagnostico.
+
+        Se llama despues del EOF de stdout. En ese momento returncode todavia
+        suele ser None aunque ffmpeg ya haya fallado, asi que hay que esperarlo:
+        de lo contrario el stderr —la unica pista de por que salieron 0 chunks—
+        se descarta justo cuando hace falta.
+        """
+        if self.process is None:
+            return
+
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self.process.wait(), timeout=2)
+
+        rc = self.process.returncode
+        logger.warning("ffmpeg: alive=%s, returncode=%s", rc is None, rc)
+
+        if self.process.stderr is None:
+            return
+        try:
+            data = await asyncio.wait_for(self.process.stderr.read(65536), timeout=2)
+        except (TimeoutError, OSError, TypeError):
+            return
+        if isinstance(data, bytes) and (text := data.decode(errors="replace").strip()):
+            for line in text.splitlines()[-5:]:
+                logger.warning("ffmpeg stderr: %s", line)
 
     async def poll_chunks(self, async_queue: asyncio.Queue) -> None:
         """Lee PCM de stdout de ffmpeg, segmenta con VAD, encola AudioChunks."""

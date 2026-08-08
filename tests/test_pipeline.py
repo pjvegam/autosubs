@@ -15,6 +15,7 @@ from autosubs.pipeline import (
     _transcribe_worker,
     _transcribe_worker_parallel,
     _translate_worker,
+    _video_download_complete,
 )
 from autosubs.vad import AudioChunk
 
@@ -33,6 +34,38 @@ def _make_config(**kwargs) -> Config:
 
 def _make_chunk(path: Path | str = "/tmp/fake_chunk.wav", duration: float = 5.0) -> AudioChunk:
     return AudioChunk(path=Path(path), duration=duration)
+
+
+class TestVideoDownloadComplete:
+    def test_missing_file_is_not_complete(self, tmp_path):
+        assert not _video_download_complete(tmp_path / "video.mkv")
+
+    def test_file_without_ytdl_is_complete(self, tmp_path):
+        video = tmp_path / "video.mkv"
+        video.write_bytes(b"contenido")
+        assert _video_download_complete(video)
+
+    def test_file_with_ytdl_is_incomplete(self, tmp_path):
+        # yt-dlp deja <archivo>.ytdl mientras la descarga sigue en curso
+        video = tmp_path / "video.mkv"
+        video.write_bytes(b"parcial")
+        (tmp_path / "video.mkv.ytdl").write_text('{"downloader": {}}')
+        assert not _video_download_complete(video)
+
+    def test_ytdl_of_another_video_does_not_interfere(self, tmp_path):
+        video = tmp_path / "video.mkv"
+        video.write_bytes(b"contenido")
+        (tmp_path / "otro.mkv.ytdl").write_text("{}")
+        assert _video_download_complete(video)
+
+    def test_suffix_is_appended_not_replaced(self, tmp_path):
+        # El marcador es "video.mkv.ytdl", no "video.ytdl"
+        video = tmp_path / "video.mkv"
+        video.write_bytes(b"contenido")
+        (tmp_path / "video.ytdl").write_text("{}")
+        assert _video_download_complete(video)
+
+
 
 
 class TestTranscribeWorker:
