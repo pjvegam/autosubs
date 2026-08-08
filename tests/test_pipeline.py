@@ -16,7 +16,6 @@ from autosubs.pipeline import (
     _transcribe_worker_parallel,
     _translate_worker,
     _video_download_complete,
-    _wait_until_downloaded,
 )
 from autosubs.vad import AudioChunk
 
@@ -67,60 +66,6 @@ class TestVideoDownloadComplete:
         assert _video_download_complete(video)
 
 
-class TestWaitUntilDownloaded:
-    @staticmethod
-    def _download_task(done: bool = False) -> MagicMock:
-        task = MagicMock()
-        task.done.return_value = done
-        return task
-
-    async def test_returns_immediately_when_already_covered(self, tmp_path):
-        video = tmp_path / "video.mkv"
-        with patch("autosubs.pipeline._downloaded_seconds", AsyncMock(return_value=200.0)):
-            covered = await _wait_until_downloaded(
-                video, 100.0, self._download_task(), margin=30.0,
-            )
-        assert covered
-
-    async def test_waits_until_target_plus_margin(self, tmp_path):
-        video = tmp_path / "video.mkv"
-        # 100 no alcanza para 100+30; 140 si
-        probe = AsyncMock(side_effect=[100.0, 140.0])
-        with (
-            patch("autosubs.pipeline._downloaded_seconds", probe),
-            patch("asyncio.sleep", AsyncMock()),
-        ):
-            covered = await _wait_until_downloaded(
-                video, 100.0, self._download_task(), margin=30.0,
-            )
-        assert covered
-        assert probe.await_count == 2
-
-    async def test_download_finished_but_short_returns_false(self, tmp_path):
-        video = tmp_path / "video.mkv"
-        # La descarga murio a los 50s con 100s pedidos
-        probe = AsyncMock(return_value=50.0)
-        with (
-            patch("autosubs.pipeline._downloaded_seconds", probe),
-            patch("asyncio.sleep", AsyncMock()),
-        ):
-            covered = await _wait_until_downloaded(
-                video, 100.0, self._download_task(done=True), margin=30.0,
-            )
-        assert not covered
-
-    async def test_download_finished_covering_target_returns_true(self, tmp_path):
-        video = tmp_path / "video.mkv"
-        # Completa: 120s cubre el punto 100 aunque no llegue a 100+30
-        probe = AsyncMock(return_value=120.0)
-        with (
-            patch("autosubs.pipeline._downloaded_seconds", probe),
-            patch("asyncio.sleep", AsyncMock()),
-        ):
-            covered = await _wait_until_downloaded(
-                video, 100.0, self._download_task(done=True), margin=30.0,
-            )
-        assert covered
 
 
 class TestTranscribeWorker:
