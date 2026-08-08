@@ -1070,16 +1070,15 @@ async def _run_mpv_pipeline(
             await diarizer.stop()
         await segmenter.stop()
         await player.close()
-        # Esperar descarga en background si sigue corriendo
+        # Al cerrar el video se corta la descarga: hacerla terminar podian ser
+        # horas de VOD con la ventana ya cerrada. Lo bajado se conserva y la
+        # proxima ejecucion reanuda desde el fragmento anotado en el .ytdl.
         if bg_download is not None:
             if not bg_download.done():
-                logger.info("Esperando descarga de video en background...")
-                try:
-                    await asyncio.wait_for(bg_download, timeout=300)
-                    logger.info("Video cacheado en: %s", cached_video)
-                except (TimeoutError, Exception) as dl_err:
-                    logger.warning("Descarga en background fallo: %s", dl_err)
-                    bg_download.cancel()
+                logger.info("Deteniendo descarga en background (se reanudara)")
+                bg_download.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await bg_download
             elif bg_download.exception() is None:
                 logger.info("Video cacheado en: %s", cached_video)
             else:

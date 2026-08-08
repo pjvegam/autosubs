@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -198,7 +199,20 @@ async def download_vod(url: str, output: str) -> None:
     ]
     logger.info("Descargando VOD completo...")
     proc = await asyncio.create_subprocess_exec(*cmd)
-    returncode = await proc.wait()
+    try:
+        returncode = await proc.wait()
+    except asyncio.CancelledError:
+        # Cancelar la task no toca al hijo: yt-dlp seguiria descargando
+        # huerfano y habria que matarlo a mano desde la consola.
+        logger.info("Deteniendo yt-dlp...")
+        with contextlib.suppress(ProcessLookupError):
+            proc.terminate()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+        raise
 
     if returncode != 0:
         raise RuntimeError(f"yt-dlp download fallo (exit {returncode})")
