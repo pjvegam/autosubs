@@ -67,6 +67,28 @@ class TestMPVPlayerStart:
         cmd = mock_thread.call_args[0][1]
         assert "--audio-file=https://audio.url" in cmd
 
+    async def test_start_time_becomes_mpv_start_flag(self):
+        # Se pasa como --start y no como seek por IPC: contra un stream HLS el
+        # seek llega antes de que MPV tenga el indice y se pierde
+        player = MPVPlayer("pipe")
+
+        with patch("autosubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+            mock_thread.return_value = MagicMock()
+            await player.start("https://video.url", start_time=1113)
+
+        cmd = mock_thread.call_args[0][1]
+        assert "--start=1113" in cmd
+
+    async def test_no_start_flag_without_start_time(self):
+        player = MPVPlayer("pipe")
+
+        with patch("autosubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+            mock_thread.return_value = MagicMock()
+            await player.start("https://video.url")
+
+        cmd = mock_thread.call_args[0][1]
+        assert not any(c.startswith("--start=") for c in cmd)
+
 
 class TestMPVPlayerSendCommand:
     async def test_send_command_returns_parsed_response(self):

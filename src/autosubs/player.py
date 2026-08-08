@@ -28,14 +28,22 @@ class MPVPlayer:
         video_url: str,
         audio_url: str | None = None,
         live: bool = False,
+        start_time: int = 0,
     ) -> None:
-        """Lanza MPV con la URL del video (y audio separado si es DASH)."""
+        """Lanza MPV con la URL del video (y audio separado si es DASH).
+
+        start_time se pasa como --start en vez de mandar un seek por IPC:
+        contra un stream HLS el seek llega antes de que MPV tenga el indice
+        cargado y se pierde sin avisar.
+        """
         cmd = [
             "mpv",
             f"--input-ipc-server={self.ipc_pipe}",
             "--force-window=yes",
             "--sub-visibility=yes",
         ]
+        if start_time > 0:
+            cmd.append(f"--start={start_time}")
         if live:
             cmd.extend([
                 "--cache=yes",

@@ -622,14 +622,10 @@ async def _run_cached_pipeline(
     try:
         if cached_video and _video_download_complete(cached_video):
             logger.info("Video encontrado en cache: %s", cached_video.name)
-            await player.start(str(cached_video))
+            # El SRT tiene timestamps absolutos: MPV arranca ya en la posicion
+            await player.start(str(cached_video), start_time=config.start_time)
             await player.connect()
             await player.sub_add(srt_path)
-            # SRT tiene timestamps absolutos, seekear video a la posicion
-            if config.start_time > 0:
-                await player.command(
-                    "set_property", "time-pos", str(config.start_time),
-                )
         else:
             logger.info("Video no cacheado, obteniendo URLs del stream...")
             video_url, mpv_audio_url, _ = await get_stream_urls(config.url)
@@ -1011,13 +1007,11 @@ async def _run_mpv_pipeline(
     try:
         use_local = video_complete and vod_start > 0
         if use_local:
-            await player.start(str(cached_video))
+            await player.start(str(cached_video), start_time=vod_start)
         else:
-            await player.start(video_url, audio_url=mpv_audio_url, live=live)
-            if vod_start > 0:
-                # Sin cache completo MPV reproduce del stream: el VOD entero
-                # esta disponible, solo hay que saltar al punto pedido.
-                await player.command("set_property", "time-pos", str(vod_start))
+            await player.start(
+                video_url, audio_url=mpv_audio_url, live=live, start_time=vod_start,
+            )
         await player.connect()
         if live:
             await player.setup_osd_for_subs()
@@ -1026,8 +1020,6 @@ async def _run_mpv_pipeline(
         if cache_end > 0:
             await player.sub_add(srt_path)
 
-        if vod_start > 0:
-            await player.command("set_property", "time-pos", str(vod_start))
         await segmenter.start()
 
         # Sincronizar timestamps SRT con la posicion del video en MPV.
