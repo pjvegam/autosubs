@@ -36,16 +36,23 @@ def ensure_ca_bundle() -> None:
     os.environ["SSL_CERT_FILE"] = certifi.where()
     logger.debug("SSL_CERT_FILE -> %s", certifi.where())
 
+
 # Leer ~1s de audio por iteracion (16kHz mono 16-bit)
 READ_CHUNK_BYTES = 16000 * 2
 
 # EQ optimizado para transcripcion de voz (inspirado en FxSound "Transcription")
+# - aresample=async=1: rellena con silencio los huecos del timeline. Sin esto,
+#   un segmento HLS que no se pueda descargar desaparece del PCM sin dejar
+#   rastro: los timestamps se calculan sumando duraciones de chunks, asi que
+#   cada segmento perdido adelanta todos los subtitulos siguientes. En sesiones
+#   largas eso llega a varios segundos (medido: ~8s a las 4 horas).
 # - highpass 80Hz: elimina rumble/graves que no son voz
 # - boost 250Hz +5dB: refuerza fundamental de voz
 # - boost 4500Hz +8dB: claridad de consonantes (s, t, k)
 # - lowpass 8000Hz: elimina ruido de alta frecuencia
 # - acompressor: compresion dinamica para nivelar volumen (partes quietas mas audibles)
 TRANSCRIPTION_AUDIO_FILTER = (
+    "aresample=async=1,"
     "highpass=f=80,"
     "equalizer=f=250:t=h:w=100:g=5,"
     "equalizer=f=4500:t=h:w=1500:g=8,"
@@ -97,6 +104,14 @@ class AudioSegmenter:
         de voz (250Hz, 4.5kHz) y compresion dinamica para normalizar volumen.
         """
         cmd = ["ffmpeg", "-loglevel", "warning"]
+        if input_source.startswith("http"):
+            # Reintentar en vez de saltarse el trozo que fallo: cada segmento
+            # perdido desplaza los subtitulos siguientes.
+            cmd.extend([
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-reconnect_delay_max", "5",
+            ])
         if self._start_time > 0:
             cmd.extend(["-ss", str(self._start_time)])
         cmd.extend([

@@ -4,8 +4,37 @@ import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from autosubs.audio import AudioSegmenter, ensure_ca_bundle
+from autosubs.audio import (
+    TRANSCRIPTION_AUDIO_FILTER,
+    AudioSegmenter,
+    ensure_ca_bundle,
+)
 from autosubs.vad import AudioChunk
+
+
+class TestTimelineIntegrity:
+    """Los timestamps salen de sumar duraciones de chunks, asi que el PCM tiene
+    que cubrir el timeline completo: un hueco perdido adelanta todo lo que sigue."""
+
+    def test_filter_fills_timeline_gaps(self):
+        assert TRANSCRIPTION_AUDIO_FILTER.startswith("aresample=async=1,")
+
+    def test_http_source_reconnects_instead_of_skipping(self):
+        seg = AudioSegmenter("https://example.com/stream.m3u8", Path("/tmp/x"))
+        cmd = seg._ffmpeg_continuous_args("https://example.com/stream.m3u8")
+        assert "-reconnect" in cmd
+        assert "-reconnect_streamed" in cmd
+
+    def test_local_file_gets_no_reconnect_flags(self):
+        seg = AudioSegmenter("/tmp/video.mkv", Path("/tmp/x"))
+        cmd = seg._ffmpeg_continuous_args("/tmp/video.mkv")
+        assert "-reconnect" not in cmd
+
+    def test_seek_precedes_input(self):
+        seg = AudioSegmenter("/tmp/v.mkv", Path("/tmp/x"), start_time=900)
+        cmd = seg._ffmpeg_continuous_args("/tmp/v.mkv")
+        assert cmd.index("-ss") < cmd.index("-i")
+        assert cmd[cmd.index("-ss") + 1] == "900"
 
 
 class TestEnsureCaBundle:
