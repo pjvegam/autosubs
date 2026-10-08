@@ -30,11 +30,13 @@ def _default_gpt_model() -> str:
     """Default traductor según API keys disponibles.
 
     Orden de preferencia:
-    1. anthropic/claude-haiku-4.5 (si OPENROUTER_API_KEY) — Setup A confirmado
+    1. anthropic/claude-haiku-5.5 (si OPENROUTER_API_KEY) — 85% mas barato que
+       haiku-4.5 medido sobre lineas reales ($0.12 vs $0.85 por stream de 5h),
+       y mejor con el registro coloquial del japones hablado
     2. gpt-4.1 (fallback OpenAI)
     """
     if os.environ.get("OPENROUTER_API_KEY"):
-        return "anthropic/claude-haiku-4.5"
+        return "anthropic/claude-haiku-5.5"
     return "gpt-4.1"
 
 
@@ -57,6 +59,7 @@ class Config:
     vad_aggressiveness: int = -1
     cookies_browser: str = ""
     start_time: int = 0
+    end_time: int = 0
     max_minutes: int = 0
     no_cache: bool = False
     speaker_gender: str = ""
@@ -101,6 +104,11 @@ class Config:
                 "OPENAI_API_KEY no encontrada. "
                 "Configura la variable de entorno o crea un archivo .env"
             )
+        if self.end_time and self.end_time <= self.start_time:
+            raise ValueError(
+                f"--end-time ({self.end_time}s) debe ser posterior a "
+                f"--start-time ({self.start_time}s)"
+            )
         if self.benchmark and not self.start_time:
             self.start_time = 300
         if not self.system_audio and not self.url:
@@ -108,6 +116,18 @@ class Config:
                 "Se requiere una URL de YouTube, "
                 "o usa --system-audio para capturar audio del sistema"
             )
+
+    @property
+    def stop_at_seconds(self) -> float:
+        """Segundo del video en que dejar de traducir (0 = hasta el final).
+
+        Es una posicion absoluta, no una duracion: el contador de tiempo del
+        pipeline avanza en tiempo de video, asi que --max-minutes tambien se
+        compara contra el reloj del video y no contra lo transcrito.
+        """
+        if self.end_time > 0:
+            return float(self.end_time)
+        return self.max_minutes * 60.0
 
     @property
     def vad_min_duration(self) -> float:

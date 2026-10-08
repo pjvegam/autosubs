@@ -37,8 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gpt-model", default="",
         help="Modelo de traduccion. OpenAI (gpt-4.1, gpt-4.1-mini) o "
-             "OpenRouter con formato provider/modelo (anthropic/claude-haiku-4.5, "
-             "deepseek/deepseek-chat, etc). Default: anthropic/claude-haiku-4.5 si "
+             "OpenRouter con formato provider/modelo (anthropic/claude-haiku-5.5, "
+             "deepseek/deepseek-chat, etc). Default: anthropic/claude-haiku-5.5 si "
              "OPENROUTER_API_KEY, sino gpt-4.1",
     )
     parser.add_argument(
@@ -88,9 +88,16 @@ def parse_args() -> argparse.Namespace:
              "(override sobre ?t= en URL)",
     )
     parser.add_argument(
+        "--end-time", default="",
+        help="Tiempo del video en que parar. Acepta: 3600, 55m, 1:30:00, 55:00. "
+             "Combinado con --start-time traduce solo ese rango "
+             "(default: hasta el final)",
+    )
+    parser.add_argument(
         "--max-minutes", default="",
-        help="Limite de duracion a traducir. Acepta: 100, 100m, 1h40m, 1:40:00 "
-             "(default: sin limite)",
+        help="Minuto del video en que parar (posicion, no duracion: con "
+             "--start-time 45:00 usa 55 para llegar al 55:00, no 10). "
+             "Acepta: 100, 100m, 1h40m, 1:40:00. Preferir --end-time",
     )
     parser.add_argument(
         "--no-cache", action="store_true",
@@ -166,6 +173,7 @@ def main() -> None:
     cli_start_time = _parse_time_arg(args.start_time, "start-time")
     start_time = cli_start_time or url_start_time
 
+    end_time = _parse_time_arg(args.end_time, "end-time")
     max_minutes = _parse_time_arg(args.max_minutes, "max-minutes", unit="minutes")
     segment_duration = _parse_time_arg(args.segment_duration, "segment-duration")
 
@@ -188,6 +196,7 @@ def main() -> None:
             fill_gaps=args.fill_gaps,
             vad_aggressiveness=args.vad_aggressiveness,
             start_time=start_time,
+            end_time=end_time,
             max_minutes=max_minutes,
             no_cache=args.no_cache,
             speaker_gender=args.speaker_gender,

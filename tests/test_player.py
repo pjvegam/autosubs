@@ -79,6 +79,27 @@ class TestMPVPlayerStart:
         cmd = mock_thread.call_args[0][1]
         assert "--start=1113" in cmd
 
+    async def test_end_time_becomes_mpv_end_flag(self):
+        player = MPVPlayer("pipe")
+
+        with patch("autosubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+            mock_thread.return_value = MagicMock()
+            await player.start("https://video.url", start_time=2700, end_time=3300)
+
+        cmd = mock_thread.call_args[0][1]
+        assert "--start=2700" in cmd
+        assert "--end=3300" in cmd
+
+    async def test_no_end_flag_without_end_time(self):
+        player = MPVPlayer("pipe")
+
+        with patch("autosubs.player.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+            mock_thread.return_value = MagicMock()
+            await player.start("https://video.url", start_time=2700)
+
+        cmd = mock_thread.call_args[0][1]
+        assert not any(c.startswith("--end=") for c in cmd)
+
     async def test_no_start_flag_without_start_time(self):
         player = MPVPlayer("pipe")
 

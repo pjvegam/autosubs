@@ -19,6 +19,12 @@ PRICING: dict[str, dict[str, float]] = {
     "local-v3": {"per_minute": 0.00},
     "cohere-transcribe-03-2026": {"per_minute": 0.00},
     "gpt-4o-mini-transcribe": {"per_minute": 0.003},
+    # Via OpenRouter. Precios derivados del campo usage.cost de la propia API
+    # sobre un clip de 3s (2026-07-25).
+    "microsoft/mai-transcribe-1.5": {"per_minute": 0.006},
+    "deepgram/nova-3": {"per_minute": 0.00364},
+    "mistralai/voxtral-mini-transcribe": {"per_minute": 0.002},
+    "openai/whisper-1": {"per_minute": 0.006},
     "gpt-4o-transcribe-diarize": {"per_minute": 0.006},
     # Gemini audio: $1/M tokens, ~1500 tokens/min => $0.0015/min
     "gemini-2.5-flash": {"per_minute": 0.0015},
@@ -34,6 +40,7 @@ PRICING: dict[str, dict[str, float]] = {
     "deepseek/deepseek-v4-pro": {"input_mtok": 1.74, "output_mtok": 3.48},
     "deepseek/deepseek-chat": {"input_mtok": 0.32, "output_mtok": 0.89},
     "moonshotai/kimi-k2": {"input_mtok": 0.57, "output_mtok": 2.30},
+    "anthropic/claude-haiku-5.5": {"input_mtok": 0.10, "output_mtok": 0.50},
     "anthropic/claude-haiku-4.5": {"input_mtok": 1.00, "output_mtok": 5.00},
     "google/gemini-2.5-flash": {"input_mtok": 0.30, "output_mtok": 2.50},
     "google/gemini-2.5-pro": {"input_mtok": 1.25, "output_mtok": 10.00},

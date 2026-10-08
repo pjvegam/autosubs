@@ -741,8 +741,8 @@ async def _run_batch_vod_pipeline(
         chunks = await split_audio(audio_file, chunks_dir, chunk_seconds)
         Path(audio_file).unlink(missing_ok=True)
 
-        # Limitar chunks si --max-minutes
-        max_seconds = config.max_minutes * 60.0
+        # Limitar chunks si --end-time / --max-minutes
+        max_seconds = config.stop_at_seconds
         if max_seconds > 0:
             max_chunks = max(1, int(max_seconds / chunk_seconds) + 1)
             if len(chunks) > max_chunks:
@@ -750,8 +750,8 @@ async def _run_batch_vod_pipeline(
                     extra.unlink(missing_ok=True)
                 chunks = chunks[:max_chunks]
                 logger.info(
-                    "Limitado a %d chunks (~%d min) por --max-minutes",
-                    max_chunks, config.max_minutes,
+                    "Limitado a %d chunks (hasta %d min de video)",
+                    max_chunks, int(max_seconds // 60),
                 )
 
         # Transcribir primer chunk antes de abrir MPV
@@ -1007,10 +1007,13 @@ async def _run_mpv_pipeline(
     try:
         use_local = video_complete and vod_start > 0
         if use_local:
-            await player.start(str(cached_video), start_time=vod_start)
+            await player.start(
+                str(cached_video), start_time=vod_start, end_time=config.end_time,
+            )
         else:
             await player.start(
-                video_url, audio_url=mpv_audio_url, live=live, start_time=vod_start,
+                video_url, audio_url=mpv_audio_url, live=live,
+                start_time=vod_start, end_time=config.end_time,
             )
         await player.connect()
         if live:
@@ -1038,7 +1041,7 @@ async def _run_mpv_pipeline(
                 transcriber(
                     asr_client, config, audio_queue, text_queue,
                     tracker=tracker, start_time_offset=time_offset,
-                    max_seconds=config.max_minutes * 60.0,
+                    max_seconds=config.stop_at_seconds,
                     local_model=local_model,
                 )
             )

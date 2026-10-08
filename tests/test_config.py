@@ -119,3 +119,39 @@ class TestConfig:
         config = Config(url="https://example.com", api_key="sk-secret-key")
         repr_str = repr(config)
         assert "sk-secret-key" not in repr_str
+
+
+class TestStopAtSeconds:
+    """El limite es una posicion del video, no una duracion: el contador del
+    pipeline avanza en tiempo de video."""
+
+    def _cfg(self, **kw):
+        return Config(
+            url="https://example.com", api_key="sk-test",
+            whisper_model="gpt-4o-transcribe", gpt_model="gpt-4.1", **kw,
+        )
+
+    def test_sin_limites_no_para(self):
+        assert self._cfg().stop_at_seconds == 0.0
+
+    def test_end_time_es_absoluto(self):
+        assert self._cfg(end_time=3300).stop_at_seconds == 3300.0
+
+    def test_max_minutes_se_convierte_a_segundos(self):
+        assert self._cfg(max_minutes=55).stop_at_seconds == 3300.0
+
+    def test_end_time_tiene_precedencia(self):
+        cfg = self._cfg(end_time=3300, max_minutes=10)
+        assert cfg.stop_at_seconds == 3300.0
+
+    def test_rango_valido(self):
+        cfg = self._cfg(start_time=2700, end_time=3300)
+        assert cfg.stop_at_seconds > cfg.start_time
+
+    def test_end_antes_de_start_es_error(self):
+        with pytest.raises(ValueError, match="posterior"):
+            self._cfg(start_time=3300, end_time=2700)
+
+    def test_end_igual_a_start_es_error(self):
+        with pytest.raises(ValueError, match="posterior"):
+            self._cfg(start_time=2700, end_time=2700)
