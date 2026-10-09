@@ -22,6 +22,17 @@ PRICING: dict[str, dict[str, float]] = {
     # Via OpenRouter. Precios derivados del campo usage.cost de la propia API
     # sobre un clip de 3s (2026-07-25).
     "microsoft/mai-transcribe-1.5": {"per_minute": 0.006},
+    "microsoft/mai-transcribe-2": {"per_minute": 0.0018},
+    "elevenlabs/scribe-v2": {"per_minute": 0.0018},
+    "qwen/qwen3-asr-flash-2026-02-10": {"per_minute": 0.0019},
+    "qwen/qwen3-asr-1.7b": {"per_minute": 0.0005},
+    "qwen/qwen3-asr-0.6b": {"per_minute": 0.0002},
+    "x-ai/grok-stt-1.0": {"per_minute": 0.0017},
+    "google/gemini-3.5-transcribe": {"per_minute": 0.003},
+    "assemblyai/universal-3-5-pro": {"per_minute": 0.0075},
+    "openai/gpt-transcribe": {"per_minute": 0.0048},
+    "nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b": {"per_minute": 0.0002},
+    "openai/whisper-large-v3-turbo": {"per_minute": 0.0002},
     "deepgram/nova-3": {"per_minute": 0.00364},
     "mistralai/voxtral-mini-transcribe": {"per_minute": 0.002},
     "openai/whisper-1": {"per_minute": 0.006},

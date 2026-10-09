@@ -15,12 +15,14 @@ def _default_whisper_model() -> str:
     """Default ASR según API keys disponibles.
 
     Orden de preferencia:
-    1. gemini-2.5-pro (si GEMINI_API_KEY) — mejor calidad/precio confirmada (Setup A)
-    2. local-turbo (si faster-whisper) — gratis pero alucinaciones de outro
+    1. microsoft/mai-transcribe-2 (si OPENROUTER_API_KEY) — 7.3% CER sobre
+       TEDxJP-10K y 0.8% de basura sobre gameplay real, a $0.10/hora
+    2. local-turbo (si faster-whisper) — gratis, pero 18% de alucinaciones
+       de outro sobre gameplay
     3. gpt-4o-transcribe (fallback API)
     """
-    if os.environ.get("GEMINI_API_KEY"):
-        return "gemini-2.5-pro"
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return "microsoft/mai-transcribe-2"
     if importlib.util.find_spec("faster_whisper") is not None:
         return "local-turbo"
     return "gpt-4o-transcribe"
