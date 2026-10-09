@@ -48,19 +48,19 @@ Acepta `45:00`, `1:30:00`, `90m`, `5400`. Si cortás a medias, al volver sigue d
 
 Medido sobre [TEDxJP-10K](https://github.com/laboroai/TEDxJP-10K) (343 utterances con transcripción humana verificada) y sobre 20 min de gameplay real. **Basura** = subtítulos inventados: despedidas de YouTube que nunca se dijeron, o texto en otro idioma.
 
-| Motor | CER | Basura | $/hora |
+| Motor | CER | Basura | $/min de audio |
 |---|---|---|---|
-| **microsoft/mai-transcribe-2** | 7.3% | 0.8% | $0.11 |
-| microsoft/mai-transcribe-1.5 | 7.2% | 0.8% | $0.36 |
-| qwen/qwen3-asr-flash | 8.4% | 0.7% | $0.11 |
-| elevenlabs/scribe-v2 | 8.4% | 5.1% | $0.11 |
-| x-ai/grok-stt-1.0 | 8.8% | 0.8% | $0.10 |
-| qwen/qwen3-asr-0.6b | 11.8% | 4.7% | $0.01 |
-| local-turbo (GPU) | 11.8% | 4.5% | $0 |
+| **microsoft/mai-transcribe-2** | 7.3% | 0.8% | 0.0018 |
+| microsoft/mai-transcribe-1.5 | 7.2% | 0.8% | 0.0060 |
+| qwen/qwen3-asr-flash | 8.4% | 0.7% | 0.0019 |
+| elevenlabs/scribe-v2 | 8.4% | 5.1% | 0.0018 |
+| x-ai/grok-stt-1.0 | 8.8% | 0.8% | 0.0017 |
+| qwen/qwen3-asr-0.6b | 11.8% | 4.7% | 0.0002 |
+| local-turbo (GPU) | 11.8% | 4.5% | 0 |
 
 El default es **mai-transcribe-2**: la misma exactitud que 1.5 a un tercio del precio. `local-turbo` es gratis pero inventa `ご視聴ありがとうございました` ("gracias por vernos") en los silencios.
 
-A hora y media de stream por día: **~$6/mes** con mai-transcribe-2, **~$1/mes** con local-turbo.
+La traducción va aparte: `haiku-5.5` cuesta ~$0.00004 por línea de subtítulo.
 
 ## Config
 
