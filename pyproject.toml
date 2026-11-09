@@ -14,7 +14,7 @@ dependencies = [
     "pyaudiowpatch>=0.2.12.8",
     "python-dotenv>=1.2.1",
     "webrtcvad-wheels>=2.0.14",
-    "yt-dlp>=2026.6.9",
+    "yt-dlp>=2026.8.19",
 ]
 
 [project.optional-dependencies]
@@ -67,7 +67,7 @@ ignore = [
     "S603",    # subprocess sin shell=True es seguro
     "S607",    # paths parciales en subprocess (yt-dlp, ffmpeg, mpv son CLI tools)
     "ASYNC110", # polling con sleep es intencional para monitorear procesos externos
-    "ASYNC230", # open() bloqueante en async es aceptable para archivos locales pequeños
+    "ASYNC230", # open() bloqueante en async es aceptable para archivos locales pequeÃ±os
     "ASYNC240", # Path methods bloqueantes en async es aceptable (operaciones triviales)
 ]
 

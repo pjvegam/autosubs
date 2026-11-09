@@ -1,10 +1,12 @@
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from autosubs.stream import (
+    FRAGMENT_CONCURRENCY,
     _ytdlp_base_args,
     download_vod,
     get_audio_url,
@@ -112,6 +114,33 @@ class TestCookiesBrowser:
         assert args[idx + 1] == "chrome"
 
 
+class TestConcurrenciaDeFragmentos:
+    """Bajar fragmentos de uno en uno hace la descarga inutilizable.
+
+    Medido el 2026-10-21 sobre un VOD de 5h que solo ofrece HLS: 126 KB/s con
+    -N 1 contra 706 con -N 8. Las 17.5 GiB del 1080p60 pasan de 38 horas a 7.
+    Los argumentos base NO lo llevan: en las extracciones (-j, -g) no pinta
+    nada y solo ensucia el comando.
+    """
+
+    async def test_el_vod_baja_fragmentos_en_paralelo(self):
+        proc = AsyncMock()
+        proc.wait.return_value = 0
+        with (
+            patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc) as spawn,
+            patch("autosubs.stream.Path") as fake_path,
+        ):
+            fake_path.return_value.exists.return_value = True
+            fake_path.return_value.stat.return_value.st_size = 1024
+            await download_vod("https://example.com", "out.mkv")
+        cmd = spawn.call_args[0]
+        assert cmd[cmd.index("-N") + 1] == str(FRAGMENT_CONCURRENCY)
+        assert FRAGMENT_CONCURRENCY > 1
+
+    def test_las_extracciones_no_lo_llevan(self):
+        assert "-N" not in _ytdlp_base_args()
+
+
 class TestYtdlpPipeAudioCmd:
     def test_returns_correct_format(self):
         cmd = ytdlp_pipe_audio_cmd("https://youtube.com/watch?v=test")
@@ -135,9 +164,67 @@ class TestGetStreamInfo:
         proc = _make_process(stderr=b"ERROR: video not found", returncode=1)
         with (
             patch("autosubs.stream.asyncio.create_subprocess_exec", return_value=proc),
-            pytest.raises(RuntimeError, match="yt-dlp fallo"),
+            pytest.raises(RuntimeError, match="yt-dlp metadata fallo"),
         ):
             await get_stream_info("https://example.com")
+
+
+class TestAvisoDeExtraccionLenta:
+    """Una extraccion de minutos sin decir nada parece un cuelgue.
+
+    Medido el 2026-10-21: YouTube estreno el reproductor 55de7e60 y la primera
+    extraccion tardo 6m09s resolviendo su reto de JS. El usuario solo vio el
+    log de los modelos y creyo que el programa estaba muerto.
+    """
+
+    @staticmethod
+    def _lento(demora: float):
+        """yt-dlp que tarda `demora` en contestar."""
+        proc = AsyncMock()
+        proc.returncode = 0
+
+        async def _communicate() -> tuple[bytes, bytes]:
+            await asyncio.sleep(demora)
+            return json.dumps({"id": "x"}).encode(), b""
+
+        proc.communicate = _communicate
+        return proc
+
+    async def test_avisa_cuando_tarda(self, caplog):
+        with (
+            patch("autosubs.stream.SLOW_EXTRACTION_WARN", 0.01),
+            patch(
+                "autosubs.stream.asyncio.create_subprocess_exec",
+                return_value=self._lento(0.05),
+            ),
+            caplog.at_level(logging.WARNING, logger="autosubs.stream"),
+        ):
+            await get_stream_info("https://example.com")
+        assert "reto de JS" in caplog.text
+
+    async def test_no_avisa_cuando_es_rapido(self, caplog):
+        with (
+            patch("autosubs.stream.SLOW_EXTRACTION_WARN", 5.0),
+            patch(
+                "autosubs.stream.asyncio.create_subprocess_exec",
+                return_value=self._lento(0.0),
+            ),
+            caplog.at_level(logging.WARNING, logger="autosubs.stream"),
+        ):
+            await get_stream_info("https://example.com")
+        assert caplog.text == ""
+
+    async def test_el_aviso_no_sobrevive_a_la_llamada(self):
+        """Cancelado el aviso, no queda una task suelta avisando despues."""
+        with (
+            patch("autosubs.stream.SLOW_EXTRACTION_WARN", 0.05),
+            patch(
+                "autosubs.stream.asyncio.create_subprocess_exec",
+                return_value=self._lento(0.0),
+            ),
+        ):
+            await get_stream_info("https://example.com")
+        assert not [t for t in asyncio.all_tasks() if "_warn_slow" in repr(t)]
 
 
 class TestGetStreamUrls:

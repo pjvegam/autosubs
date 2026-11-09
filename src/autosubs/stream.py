@@ -98,6 +98,12 @@ _cookies_browser: str = ""
 # El player_client por defecto que elige yt-dlp ('tv') sirve URLs que YouTube
 # rechaza con HTTP 403 al descargar. 'web_safari' evita el bloqueo y respeta
 # las cookies del browser (ios/tv_simply no soportan cookies).
+#
+# Probado el 2026-10-17 con yt-dlp 2026.8.19 sobre un VOD de 5h, buscando DASH
+# para no depender del HLS: 'default,-tv' SI lista formatos DASH, pero exigen
+# un GVS PO token y dan 403 hasta a yt-dlp, con cabeceras y cookies incluidas.
+# android_vr, ios, tv_simply, android, mweb y web_creator no dan nada. O sea
+# que el HLS de web_safari es lo unico que de verdad se puede leer.
 _PLAYER_CLIENT = "web_safari"
 
 
@@ -115,6 +121,14 @@ def build_ytdl_raw_options() -> str:
     if deno_path := _find_deno():
         parts.append(f"js-runtimes=deno:{deno_path}")
     return ",".join(parts)
+
+
+# Fragmentos en paralelo al bajar. YouTube estrangula por conexion, no por IP:
+# medido el 2026-10-21 sobre un VOD de 5h que solo trae HLS, con la descarga
+# del usuario y el stream corriendo encima, 126 KB/s con -N 1, 369 con -N 4 y
+# 706 con -N 8, sin un solo 429. De uno en uno, las 17.5 GiB del 1080p60 son
+# 38 horas. Solo aplica a formatos fragmentados; en los progresivos se ignora.
+FRAGMENT_CONCURRENCY = 8
 
 
 def _ytdlp_base_args() -> list[str]:
@@ -135,6 +149,7 @@ async def download_audio(url: str, output: str) -> None:
     """Descarga solo audio con yt-dlp (evita throttling de YouTube)."""
     cmd = [
         *_ytdlp_base_args(),
+        "-N", str(FRAGMENT_CONCURRENCY),
         "-f", "ba",
         "--no-part",
         "-o", output,
@@ -191,6 +206,7 @@ async def download_vod(url: str, output: str) -> None:
     """
     cmd = [
         *_ytdlp_base_args(),
+        "-N", str(FRAGMENT_CONCURRENCY),
         "-f", "bv*+ba/b*",
         "--merge-output-format", "mkv",
         "--no-part",
@@ -257,32 +273,55 @@ def ytdlp_pipe_audio_cmd(url: str) -> list[str]:
     return [*_ytdlp_base_args(), "-f", "wa*", "-o", "-", url]
 
 
-async def get_stream_info(url: str) -> dict:
-    """Extrae metadata del video/stream via yt-dlp -j."""
-    cmd = [*_ytdlp_base_args(), "-j", url]
+# Cuanto puede tardar una extraccion antes de que valga la pena avisar. Lo
+# normal son 6s; cuando YouTube estrena reproductor, la primera extraccion
+# tiene que resolver su reto de JS desde cero y se midio en 6 minutos
+# (reproductor 55de7e60, 2026-10-21). Queda cacheado, asi que se paga una vez
+# por reproductor, pero sin aviso parece que el programa se colgo.
+SLOW_EXTRACTION_WARN = 25.0
+
+
+async def _warn_slow_extraction(label: str) -> None:
+    """Avisa de una extraccion lenta para que no parezca un cuelgue."""
+    await asyncio.sleep(SLOW_EXTRACTION_WARN)
+    logger.warning(
+        "yt-dlp (%s) lleva mas de %ds. Si YouTube estreno reproductor, esta "
+        "resolviendo su reto de JS: puede tardar varios minutos la primera "
+        "vez y despues queda cacheado.",
+        label, int(SLOW_EXTRACTION_WARN),
+    )
+
+
+async def _run_ytdlp(cmd: list[str], label: str) -> str:
+    """Corre yt-dlp y devuelve su stdout, avisando si tarda demasiado."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
+    aviso = asyncio.create_task(_warn_slow_extraction(label))
+    try:
+        stdout, stderr = await proc.communicate()
+    finally:
+        aviso.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await aviso
     if proc.returncode != 0:
-        raise RuntimeError(f"yt-dlp fallo: {stderr.decode().strip()}")
-    return json.loads(stdout.decode())
+        raise RuntimeError(f"yt-dlp {label} fallo: {stderr.decode().strip()}")
+    return stdout.decode()
+
+
+async def get_stream_info(url: str) -> dict:
+    """Extrae metadata del video/stream via yt-dlp -j."""
+    cmd = [*_ytdlp_base_args(), "-j", url]
+    return json.loads(await _run_ytdlp(cmd, "metadata"))
 
 
 async def _extract_url(url: str, format_spec: str, label: str) -> str:
     """Extrae una URL directa via yt-dlp -g."""
     cmd = [*_ytdlp_base_args(), "-g", "-f", format_spec, url]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"yt-dlp {label} fallo: {stderr.decode().strip()}")
-    return stdout.decode().strip().splitlines()[0]
+    salida = await _run_ytdlp(cmd, label)
+    return salida.strip().splitlines()[0]
 
 
 async def get_stream_urls(url: str) -> tuple[str, str | None, str]:

@@ -206,6 +206,7 @@ async def _get_stream_context(
     Traduce el titulo para dar contexto util a GPT.
     """
     try:
+        logger.info("Resolviendo metadata del video con yt-dlp...")
         info = await get_stream_info(url)
         live = info.get("is_live", False)
         video_id = info.get("id", "")
