@@ -1,12 +1,20 @@
 """Recupera transcripciones perdidas en SRT usando video cacheado.
 
-Detecta gaps entre entries del SRT, extrae el audio correspondiente del video local,
-y re-transcribe con gpt-4o-transcribe (estable, evita 503 de Gemini).
+Detecta gaps entre entries del SRT, extrae el audio correspondiente del video
+local, y re-transcribe con el mismo motor que el resto del pipeline.
+
+Antes forzaba gpt-4o-transcribe aqui, de cuando el default era Gemini y se
+buscaba algo que no diera 503. Eso se volvio un tiro en el pie: medido sobre
+gameplay real, gpt-4o-transcribe mete 21.6% de basura (alucina en arabe, persa
+y checo) donde mai-transcribe-2 mete 0%. Rellenar los huecos con el peor motor
+medido deja el SRT peor que con los huecos.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 import re
 import shutil
@@ -19,7 +27,7 @@ from openai import AsyncOpenAI
 from autosubs.config import LOGS_DIR, YT_ID_RE, Config
 from autosubs.costs import CostTracker
 from autosubs.subtitles import _format_timestamp
-from autosubs.transcribe import transcribe_audio
+from autosubs.transcribe import supports_turns, transcribe_audio, transcribe_turns
 from autosubs.translate import translate_text
 
 logger = logging.getLogger(__name__)
@@ -27,6 +35,35 @@ logger = logging.getLogger(__name__)
 _TS_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})")
 _MIN_GAP = 3.0  # segundos
 _CHUNK_SECONDS = 8  # subdividir gaps largos en chunks de N segundos
+
+# Gaps a la vez. De uno en uno son ~10s por gap y 211 gaps se vuelven media
+# hora larga, que es justo por lo que el usuario interrumpio la primera
+# corrida. 4 no acerca la reserva de OpenRouter al limite como los 6 del
+# carril en vivo (ver el 402 con $2.30 de saldo).
+_GAP_CONCURRENCY = 4
+
+# Gaps ya intentados que no dieron nada: casi siempre es silencio o ruido del
+# juego, no habla perdida. Sin anotarlos, cada re-corrida los vuelve a
+# transcribir enteros. Medido sobre una corrida real: de 170 gaps intentados
+# solo 68 dieron texto, asi que reintentar a ciegas es pagar por 102 que ya
+# sabemos que estan vacios.
+_VACIOS_SUFFIX = ".gaps_vacios.json"
+
+
+def _cargar_vacios(path: Path) -> set[tuple[float, float]]:
+    """Gaps que ya se intentaron y salieron vacios."""
+    if not path.exists():
+        return set()
+    try:
+        return {(float(a), float(b)) for a, b in json.loads(path.read_text())}
+    except (OSError, ValueError, TypeError):
+        logger.warning("No se pudo leer %s, se reintentaran todos", path.name)
+        return set()
+
+
+def _guardar_vacios(path: Path, vacios: set[tuple[float, float]]) -> None:
+    with contextlib.suppress(OSError):
+        path.write_text(json.dumps(sorted(vacios)), encoding="utf-8")
 
 
 @dataclass
@@ -139,9 +176,17 @@ async def _fill_gap(
     new_entries: list[SrtEntry] = []
     for chunk_path, ch_start, ch_end in sub_chunks:
         try:
-            text = await transcribe_audio(
-                asr_client, chunk_path, config.source_lang, "gpt-4o-transcribe",
-            )
+            if supports_turns(config.whisper_model):
+                turnos = await transcribe_turns(
+                    asr_client, chunk_path, config.source_lang,
+                    config.whisper_model,
+                )
+                text = "\n".join(t.text for t in turnos) if turnos else None
+            else:
+                text = await transcribe_audio(
+                    asr_client, chunk_path, config.source_lang,
+                    config.whisper_model,
+                )
         except Exception as e:
             logger.warning("Transcripcion fallo en %.0fs: %s", ch_start, e)
             text = None
@@ -198,6 +243,17 @@ async def fill_gaps(config: Config) -> None:
 
     entries = parse_srt(srt_path)
     gaps = find_gaps(entries)
+
+    vacios_path = srt_path.with_suffix(_VACIOS_SUFFIX)
+    vacios = _cargar_vacios(vacios_path)
+    if vacios:
+        antes = len(gaps)
+        gaps = [g for g in gaps if g not in vacios]
+        if saltados := antes - len(gaps):
+            logger.info(
+                "Saltando %d gaps ya intentados que salieron vacios "
+                "(borra %s para reintentarlos)", saltados, vacios_path.name,
+            )
     if not gaps:
         logger.info("No hay gaps que rellenar en %s", srt_path.name)
         return
@@ -209,46 +265,66 @@ async def fill_gaps(config: Config) -> None:
     )
 
     # Backup del SRT original
+    # El backup es del SRT ANTES de tocarlo nunca. Si ya existe, es de una
+    # corrida previa y pisarlo cambiaria la red de seguridad por una copia que
+    # ya lleva entries recuperadas: el original quedaria irrecuperable.
     backup = srt_path.with_suffix(".srt.bak")
-    shutil.copy2(srt_path, backup)
-    logger.info("Backup creado: %s", backup.name)
+    if backup.exists():
+        logger.info("Backup previo intacto: %s", backup.name)
+    else:
+        shutil.copy2(srt_path, backup)
+        logger.info("Backup creado: %s", backup.name)
 
     # Clientes (importar el factory de pipeline)
-    from autosubs.pipeline import _create_translate_client
-    asr_client = AsyncOpenAI(api_key=config.api_key)
+    from autosubs.pipeline import _create_asr_client, _create_translate_client
+    asr_client = _create_asr_client(config.whisper_model, config.api_key)
     translate_client = _create_translate_client(config.gpt_model, config.api_key)
     tracker = CostTracker(
-        whisper_model="gpt-4o-transcribe",
+        whisper_model=config.whisper_model,
         translation_model=config.gpt_model,
         source_lang=config.source_lang,
         target_lang=config.target_lang,
     )
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="autosubs_fillgaps_"))
+    sem = asyncio.Semaphore(_GAP_CONCURRENCY)
+    hechos = 0
     try:
         new_entries: list[SrtEntry] = []
-        for i, (gs, ge) in enumerate(gaps, 1):
+
+        async def _uno(gs: float, ge: float) -> None:
+            nonlocal hechos
+            async with sem:
+                recovered = await _fill_gap(
+                    asr_client, translate_client, config,
+                    video_path, gs, ge, tmp_dir, tracker,
+                )
+            hechos += 1
             mm_s, ss_s = divmod(int(gs), 60)
             logger.info(
-                "Gap %d/%d en %02d:%02d (+%.1fs)...",
-                i, len(gaps), mm_s, ss_s, ge - gs,
+                "Gap %d/%d en %02d:%02d (+%.1fs): %d entries",
+                hechos, len(gaps), mm_s, ss_s, ge - gs, len(recovered),
             )
-            recovered = await _fill_gap(
-                asr_client, translate_client, config,
-                video_path, gs, ge, tmp_dir, tracker,
-            )
-            new_entries.extend(recovered)
-            logger.info("  → recuperadas %d entries", len(recovered))
+            if recovered:
+                new_entries.extend(recovered)
+            else:
+                vacios.add((gs, ge))
 
-            # Guardar progreso cada 10 gaps (resilient a Ctrl+C)
-            if i % 10 == 0:
-                merged = entries + new_entries
-                write_srt(srt_path, merged)
-                logger.info("Checkpoint: %d entries totales", len(merged))
+            # Guardar progreso: resiliente a Ctrl+C, que es como termino la
+            # primera corrida de verdad.
+            if hechos % 10 == 0:
+                write_srt(srt_path, entries + new_entries)
+                _guardar_vacios(vacios_path, vacios)
+                logger.info(
+                    "Checkpoint: %d entries totales", len(entries) + len(new_entries),
+                )
+
+        await asyncio.gather(*(_uno(gs, ge) for gs, ge in gaps))
 
         # Final write
         merged = entries + new_entries
         write_srt(srt_path, merged)
+        _guardar_vacios(vacios_path, vacios)
 
         logger.info(
             "Completado: %d gaps procesados, %d entries nuevas (total %d)",

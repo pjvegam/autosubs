@@ -30,9 +30,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--whisper-model", default="",
-        help="Modelo de transcripcion: gemini-2.5-pro (API), gpt-4o-transcribe (API), "
-             "local-turbo (GPU), local-v3 (GPU). Default: AUTOSUBS_WHISPER_MODEL, "
-             "gemini-2.5-pro si GEMINI_API_KEY, sino local-turbo, sino gpt-4o-transcribe",
+        help="Modelo de transcripcion: microsoft/mai-transcribe-2 (API), "
+             "qwen/qwen3-asr-flash (API), local-turbo (GPU), local-v3 (GPU). "
+             "Default: AUTOSUBS_WHISPER_MODEL, mai-transcribe-2 si OPENROUTER_API_KEY, "
+             "sino local-turbo, sino gpt-4o-transcribe",
     )
     parser.add_argument(
         "--gpt-model", default="",
@@ -76,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--fill-gaps", action="store_true",
-        help="Rellena gaps en SRT cacheado usando video local + gpt-4o-transcribe",
+        help="Rellena gaps en SRT cacheado usando el video local y --whisper-model",
     )
     parser.add_argument(
         "--vad-aggressiveness", type=int, default=-1,
