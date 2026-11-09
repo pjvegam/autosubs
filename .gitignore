@@ -19,6 +19,7 @@ wheels/
 
 # Session logs
 livesubs_logs/
+autosubs_logs/
 
 # Audio/video samples (temporales)
 *.mp3
