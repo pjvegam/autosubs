@@ -41,11 +41,9 @@ def ensure_ca_bundle() -> None:
 READ_CHUNK_BYTES = 16000 * 2
 
 # EQ optimizado para transcripcion de voz (inspirado en FxSound "Transcription")
-# - aresample=async=1: rellena con silencio los huecos del timeline. Sin esto,
-#   un segmento HLS que no se pueda descargar desaparece del PCM sin dejar
-#   rastro: los timestamps se calculan sumando duraciones de chunks, asi que
-#   cada segmento perdido adelanta todos los subtitulos siguientes. En sesiones
-#   largas eso llega a varios segundos (medido: ~8s a las 4 horas).
+# - aresample=async=1: rellena con silencio los huecos del timeline. Necesita
+#   -copyts para funcionar (ver _ffmpeg_continuous_args): sin el, ffmpeg
+#   normaliza los PTS antes del filtro y el hueco ya no existe cuando llega.
 # - highpass 80Hz: elimina rumble/graves que no son voz
 # - boost 250Hz +5dB: refuerza fundamental de voz
 # - boost 4500Hz +8dB: claridad de consonantes (s, t, k)
@@ -61,6 +59,22 @@ TRANSCRIPTION_AUDIO_FILTER = (
 )
 
 
+def transcription_filter(*, pad_from_zero: bool) -> str:
+    """Filtro de transcripcion, rellenando o no el hueco inicial de la pista.
+
+    Por defecto aresample empieza a emitir en el primer PTS que le llega. Si la
+    pista de audio arranca despues del segundo cero, ese hueco de delante no
+    existe para quien cuenta bytes de PCM y todos los subtitulos salen
+    adelantados ese tanto. Medido en un VOD real: el primer paquete de audio
+    venia en 599.9s y el PCM salia de 30s en vez de 630s.
+    """
+    if not pad_from_zero:
+        return TRANSCRIPTION_AUDIO_FILTER
+    return TRANSCRIPTION_AUDIO_FILTER.replace(
+        "aresample=async=1,", "aresample=async=1:first_pts=0,", 1,
+    )
+
+
 class AudioSegmenter:
     """Segmenta audio de un stream en chunks WAV usando ffmpeg + VAD."""
 
@@ -73,6 +87,7 @@ class AudioSegmenter:
         vad_aggressiveness: int = 2,
         pcm_callback: Callable[[bytes], None] | None = None,
         start_time: int = 0,
+        live: bool = False,
     ) -> None:
         self.audio_url = audio_url
         self.output_dir = output_dir
@@ -80,6 +95,7 @@ class AudioSegmenter:
         self._vad_aggressiveness = vad_aggressiveness
         self._pcm_callback = pcm_callback
         self._start_time = start_time
+        self._live = live
         self.process: asyncio.subprocess.Process | None = None
         self._ffmpeg_popen: subprocess.Popen | None = None
         self._ytdlp_popen: subprocess.Popen | None = None
@@ -115,8 +131,20 @@ class AudioSegmenter:
         if self._start_time > 0:
             cmd.extend(["-ss", str(self._start_time)])
         cmd.extend([
+            # Sin -copyts, ffmpeg reescribe los PTS a un timeline continuo
+            # antes del filtro: un segmento HLS perdido deja de ser un hueco
+            # y aresample=async=1 no tiene nada que rellenar. Medido sobre un
+            # TS con salto de PTS de 30s: 20s de PCM sin -copyts, 50s con el.
+            # Los timestamps de los subtitulos salen de contar bytes de PCM,
+            # asi que ese faltante adelanta todo lo que sigue.
+            "-copyts",
             "-i", input_source,
-            "-af", TRANSCRIPTION_AUDIO_FILTER,
+            # Rellenar desde cero solo al leer un VOD desde el principio: con
+            # -ss el PCM tiene que empezar en el punto buscado, y en vivo se
+            # entra por el extremo, donde rellenar seria horas de silencio.
+            "-af", transcription_filter(
+                pad_from_zero=not self._live and self._start_time == 0,
+            ),
             "-ar", "16000",
             "-ac", "1",
             "-f", "s16le",

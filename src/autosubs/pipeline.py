@@ -114,8 +114,8 @@ def _is_gemini_asr(whisper_model: str) -> bool:
 def _create_translate_client(gpt_model: str, openai_api_key: str) -> AsyncOpenAI:
     """Crea cliente OpenAI-compatible segun el modelo.
 
-    - Modelos con "/" (ej: anthropic/claude-haiku-4.5) → OpenRouter
-    - Resto → OpenAI directo
+    - Modelos con "/" (ej: anthropic/claude-haiku-4.5) â†’ OpenRouter
+    - Resto â†’ OpenAI directo
     """
     import os
     if "/" in gpt_model:
@@ -130,7 +130,7 @@ def _create_translate_client(gpt_model: str, openai_api_key: str) -> AsyncOpenAI
 
 
 async def _load_local_whisper(model_size: str) -> LocalWhisperModel:
-    """Carga modelo faster-whisper en GPU (blocking → to_thread)."""
+    """Carga modelo faster-whisper en GPU (blocking â†’ to_thread)."""
     from autosubs.local_whisper import LocalWhisperModel
 
     return await asyncio.to_thread(LocalWhisperModel, model_size)
@@ -995,6 +995,7 @@ async def _run_mpv_pipeline(
         vad_aggressiveness=config.vad_aggressiveness,
         pcm_callback=pcm_callback,
         start_time=int(translate_from),
+        live=live,
     )
 
     audio_queue: asyncio.Queue = asyncio.Queue(maxsize=5)

@@ -1,8 +1,11 @@
 import asyncio
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from autosubs.audio import (
     TRANSCRIPTION_AUDIO_FILTER,
@@ -18,6 +21,86 @@ class TestTimelineIntegrity:
 
     def test_filter_fills_timeline_gaps(self):
         assert TRANSCRIPTION_AUDIO_FILTER.startswith("aresample=async=1,")
+
+    def test_copyts_presente(self):
+        """Sin -copyts el aresample de arriba no ve los huecos y no rellena."""
+        seg = AudioSegmenter("/tmp/v.mkv", Path("/tmp/x"))
+        assert "-copyts" in seg._ffmpeg_continuous_args("/tmp/v.mkv")
+
+    @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="necesita ffmpeg")
+    def test_hueco_de_pts_se_rellena_de_verdad(self, tmp_path):
+        """El test de arriba mira la cadena; este mide el PCM que sale.
+
+        Dos TS de 10s pegados a nivel de bytes, el segundo con PTS +40s: es
+        exactamente lo que ve ffmpeg cuando un segmento HLS no se descarga.
+        """
+        partes = []
+        for i, offset in enumerate((0, 40)):
+            parte = tmp_path / f"p{i}.ts"
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-y",
+                 "-f", "lavfi", "-i", "sine=f=440:d=10:r=16000",
+                 "-c:a", "aac", "-output_ts_offset", str(offset), str(parte)],
+                check=True,
+            )
+            partes.append(parte.read_bytes())
+        gap_ts = tmp_path / "gap.ts"
+        gap_ts.write_bytes(b"".join(partes))
+
+        seg = AudioSegmenter(str(gap_ts), tmp_path)
+        cmd = seg._ffmpeg_continuous_args(str(gap_ts))
+        cmd[cmd.index("pipe:1")] = str(raw := tmp_path / "out.raw")
+        subprocess.run(cmd, check=True, capture_output=True)
+
+        # 16kHz mono s16le = 32000 bytes/s. 10 + 30 de hueco + 10 = 50s
+        segundos = raw.stat().st_size / 32000
+        assert segundos == pytest.approx(50, abs=1.5), (
+            f"el hueco no se relleno: {segundos:.1f}s de PCM en vez de ~50s"
+        )
+
+    def test_vod_desde_cero_rellena_el_hueco_de_delante(self):
+        """Si la pista empieza tarde, sin esto todo sale adelantado."""
+        seg = AudioSegmenter("/tmp/v.mkv", Path("/tmp/x"))
+        af = seg._ffmpeg_continuous_args("/tmp/v.mkv")
+        assert "first_pts=0" in af[af.index("-af") + 1]
+
+    def test_con_ss_no_rellena_desde_cero(self):
+        """Buscando un punto, el PCM arranca ahi: rellenar serian 900s de silencio."""
+        seg = AudioSegmenter("/tmp/v.mkv", Path("/tmp/x"), start_time=900)
+        af = seg._ffmpeg_continuous_args("/tmp/v.mkv")
+        assert "first_pts=0" not in af[af.index("-af") + 1]
+
+    def test_en_vivo_no_rellena_desde_cero(self):
+        """En vivo se entra por el extremo; delante esta toda la transmision."""
+        seg = AudioSegmenter("https://live", Path("/tmp/x"), live=True)
+        af = seg._ffmpeg_continuous_args("https://live")
+        assert "first_pts=0" not in af[af.index("-af") + 1]
+
+    @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="necesita ffmpeg")
+    def test_arranque_tardio_de_la_pista_se_rellena_de_verdad(self, tmp_path):
+        """El hueco inicial es el que mas desincroniza, y el que no se veia.
+
+        Un TS de 10s cuyo primer PTS es 40s: es lo que ve ffmpeg cuando la
+        pista de audio no empieza donde empieza el video. Medido en un VOD
+        real del usuario ese hueco era de 595s, o sea 10 minutos de desfase.
+        """
+        tarde = tmp_path / "tarde.ts"
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y",
+             "-f", "lavfi", "-i", "sine=f=440:d=10:r=16000",
+             "-c:a", "aac", "-output_ts_offset", "40", str(tarde)],
+            check=True,
+        )
+
+        seg = AudioSegmenter(str(tarde), tmp_path)
+        cmd = seg._ffmpeg_continuous_args(str(tarde))
+        cmd[cmd.index("pipe:1")] = str(raw := tmp_path / "tarde.raw")
+        subprocess.run(cmd, check=True, capture_output=True)
+
+        segundos = raw.stat().st_size / 32000
+        assert segundos == pytest.approx(50, abs=1.5), (
+            f"el arranque no se relleno: {segundos:.1f}s de PCM en vez de ~50s"
+        )
 
     def test_http_source_reconnects_instead_of_skipping(self):
         seg = AudioSegmenter("https://example.com/stream.m3u8", Path("/tmp/x"))
