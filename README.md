@@ -52,7 +52,6 @@ Medido sobre [TEDxJP-10K](https://github.com/laboroai/TEDxJP-10K) (343 utterance
 |---|---|---|---|
 | **microsoft/mai-transcribe-2** | 7.3% | 0.8% | 0.0018 |
 | microsoft/mai-transcribe-1.5 | 7.2% | 0.8% | 0.0060 |
-| qwen/qwen3-asr-flash | 8.4% | 0.7% | 0.0019 |
 | elevenlabs/scribe-v2 | 8.4% | 5.1% | 0.0018 |
 | x-ai/grok-stt-1.0 | 8.8% | 0.8% | 0.0017 |
 | qwen/qwen3-asr-0.6b | 11.8% | 4.7% | 0.0002 |
