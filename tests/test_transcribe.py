@@ -1,6 +1,47 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from autosubs.transcribe import transcribe_audio
+
+
+class TestResponseFormatPorProveedor:
+    """OpenRouter rechaza response_format="text"."""
+
+    async def test_openrouter_pide_json(self, tmp_path):
+        audio_file = tmp_path / "chunk_0000.wav"
+        audio_file.write_bytes(b"fake audio data")
+        client = AsyncMock()
+        client.audio.transcriptions.create.return_value = MagicMock(text="texto")
+
+        await transcribe_audio(
+            client, audio_file, "ja", "microsoft/mai-transcribe-2",
+        )
+
+        kwargs = client.audio.transcriptions.create.call_args.kwargs
+        assert kwargs["response_format"] == "json"
+
+    async def test_openai_pide_text(self, tmp_path):
+        audio_file = tmp_path / "chunk_0000.wav"
+        audio_file.write_bytes(b"fake audio data")
+        client = AsyncMock()
+        client.audio.transcriptions.create.return_value = "texto"
+
+        await transcribe_audio(client, audio_file, "ja", "gpt-4o-transcribe")
+
+        kwargs = client.audio.transcriptions.create.call_args.kwargs
+        assert kwargs["response_format"] == "text"
+
+    async def test_explicito_gana(self, tmp_path):
+        audio_file = tmp_path / "chunk_0000.wav"
+        audio_file.write_bytes(b"fake audio data")
+        client = AsyncMock()
+        client.audio.transcriptions.create.return_value = MagicMock(text="texto")
+
+        await transcribe_audio(
+            client, audio_file, "ja", "gpt-4o-transcribe", response_format="json",
+        )
+
+        kwargs = client.audio.transcriptions.create.call_args.kwargs
+        assert kwargs["response_format"] == "json"
 
 
 class TestTranscribeAudio:

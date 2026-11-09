@@ -7,10 +7,12 @@ import pytest
 from autosubs.config import Config
 from autosubs.costs import CostTracker
 from autosubs.pipeline import (
+    _create_asr_client,
     _get_stream_context,
     _monitor_mpv,
     _monitor_overlay,
     _overlay_subtitle_writer,
+    _pick_transcriber,
     _subtitle_writer,
     _transcribe_worker,
     _transcribe_worker_parallel,
@@ -34,6 +36,53 @@ def _make_config(**kwargs) -> Config:
 
 def _make_chunk(path: Path | str = "/tmp/fake_chunk.wav", duration: float = 5.0) -> AudioChunk:
     return AudioChunk(path=Path(path), duration=duration)
+
+
+class TestPickTranscriber:
+    """En serie el ASR no llega en tiempo real: 20.6s por chunk de 8s."""
+
+    def test_api_usa_paralelo(self):
+        assert _pick_transcriber(None) is _transcribe_worker_parallel
+
+    def test_local_usa_serial(self):
+        # Una sola GPU, y el paralelo ignora local_model
+        assert _pick_transcriber(MagicMock()) is _transcribe_worker
+
+    def test_paralelo_cubre_la_latencia_medida(self):
+        import inspect
+        conc = inspect.signature(_transcribe_worker_parallel).parameters
+        # 18.5s de ASR + 2.1s de traduccion sobre chunks de 8s = 2.6 en vuelo
+        assert conc["max_concurrent"].default >= 3
+
+
+class TestCreateAsrClient:
+    """Un slug con "/" es de OpenRouter; mandarlo a OpenAI da 400."""
+
+    def test_slug_de_openrouter_usa_openrouter(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        client = _create_asr_client("microsoft/mai-transcribe-2", "sk-openai")
+        assert "openrouter.ai" in str(client.base_url)
+
+    def test_modelo_de_openai_usa_openai(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        client = _create_asr_client("gpt-4o-transcribe", "sk-openai")
+        assert "openrouter.ai" not in str(client.base_url)
+
+    def test_gemini_usa_openai_por_el_fallback(self, monkeypatch):
+        # Gemini va por su propio SDK, pero su fallback es gpt-4o-transcribe
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        client = _create_asr_client("gemini-2.5-pro", "sk-openai")
+        assert "openrouter.ai" not in str(client.base_url)
+
+    def test_local_usa_openai(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        client = _create_asr_client("local-turbo", "sk-openai")
+        assert "openrouter.ai" not in str(client.base_url)
+
+    def test_sin_key_de_openrouter_explica_el_problema(self, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+            _create_asr_client("microsoft/mai-transcribe-2", "sk-openai")
 
 
 class TestVideoDownloadComplete:
@@ -87,7 +136,7 @@ class TestTranscribeWorker:
                 await _transcribe_worker(client, config, audio_queue, text_queue)
 
         item = await text_queue.get()
-        assert item == (0, 4.2, "texto transcrito")
+        assert item == (0, 4.2, "texto transcrito", None)
         sentinel = await text_queue.get()
         assert sentinel is None
 
@@ -148,7 +197,7 @@ class TestTranscribeWorker:
         while not text_queue.empty():
             items.append(await text_queue.get())
 
-        assert items[0] == (0, 4.2, "texto uno")
+        assert items[0] == (0, 4.2, "texto uno", None)
         assert items[1][0] == pytest.approx(4.2)
         assert items[1][1] == 5.8
         assert items[2][0] == pytest.approx(10.0)
@@ -208,13 +257,13 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
-            await text_queue.put((0, 4.5, "original"))
+            await text_queue.put((0, 4.5, "original", None))
             await text_queue.put(None)
 
             await _translate_worker(client, config, text_queue, translated_queue)
 
         item = await translated_queue.get()
-        assert item == (0, 4.5, "traducido")
+        assert item == (0, 4.5, "traducido", None)
         sentinel = await translated_queue.get()
         assert sentinel is None
 
@@ -227,7 +276,7 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = None
-            await text_queue.put((0, 5.0, "original"))
+            await text_queue.put((0, 5.0, "original", None))
             await text_queue.put(None)
 
             await _translate_worker(client, config, text_queue, translated_queue)
@@ -244,7 +293,7 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.side_effect = RuntimeError("boom")
-            await text_queue.put((0, 5.0, "original"))
+            await text_queue.put((0, 5.0, "original", None))
             await text_queue.put(None)
 
             await _translate_worker(client, config, text_queue, translated_queue)
@@ -261,7 +310,7 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
-            await text_queue.put((0, 4.5, "original"))
+            await text_queue.put((0, 4.5, "original", None))
             await text_queue.put(None)
 
             await _translate_worker(
@@ -282,9 +331,9 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.side_effect = ["trad_1", "trad_2", "trad_3"]
-            await text_queue.put((0, 3.0, "texto_1"))
-            await text_queue.put((3.0, 3.0, "texto_2"))
-            await text_queue.put((6.0, 3.0, "texto_3"))
+            await text_queue.put((0, 3.0, "texto_1", None))
+            await text_queue.put((3.0, 3.0, "texto_2", None))
+            await text_queue.put((6.0, 3.0, "texto_3", None))
             await text_queue.put(None)
 
             await _translate_worker(client, config, text_queue, translated_queue)
@@ -308,7 +357,7 @@ class TestTranslateWorker:
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.side_effect = ["t1", "t2", "t3", "t4", "t5"]
             for i in range(5):
-                await text_queue.put((i * 3.0, 3.0, f"texto_{i}"))
+                await text_queue.put((i * 3.0, 3.0, f"texto_{i}", None))
             await text_queue.put(None)
 
             await _translate_worker(client, config, text_queue, translated_queue)
@@ -332,7 +381,7 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
-            await text_queue.put((0, 4.5, "original"))
+            await text_queue.put((0, 4.5, "original", None))
             await text_queue.put(None)
 
             await _translate_worker(
@@ -356,7 +405,7 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
-            await text_queue.put((0, 4.5, "original"))
+            await text_queue.put((0, 4.5, "original", None))
             await text_queue.put(None)
 
             await _translate_worker(client, config, text_queue, translated_queue)
@@ -377,7 +426,7 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
-            await text_queue.put((0, 4.5, "original"))
+            await text_queue.put((0, 4.5, "original", None))
             await text_queue.put(None)
 
             await _translate_worker(
@@ -399,7 +448,7 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
-            await text_queue.put((0, 4.5, "original"))
+            await text_queue.put((0, 4.5, "original", None))
             await text_queue.put(None)
 
             await _translate_worker(
@@ -419,8 +468,8 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.side_effect = ["traducido_1", "traducido_2"]
-            await text_queue.put((0, 4.5, "original_1"))
-            await text_queue.put((4.5, 5.0, "original_2"))
+            await text_queue.put((0, 4.5, "original_1", None))
+            await text_queue.put((4.5, 5.0, "original_2", None))
             await text_queue.put(None)
 
             await _translate_worker(
@@ -446,7 +495,7 @@ class TestTranslateWorker:
 
         with patch("autosubs.pipeline.translate_text", new_callable=AsyncMock) as mock_translate:
             mock_translate.return_value = "traducido"
-            await text_queue.put((0, 4.5, "original"))
+            await text_queue.put((0, 4.5, "original", None))
             await text_queue.put(None)
 
             await _translate_worker(
@@ -610,7 +659,7 @@ class TestSubtitleWriter:
         player.sub_reload = AsyncMock()
 
         translated_queue: asyncio.Queue = asyncio.Queue()
-        await translated_queue.put((0.0, 4.5, "Hola mundo"))
+        await translated_queue.put((0.0, 4.5, "Hola mundo", None))
         await translated_queue.put(None)
 
         await _subtitle_writer(config, translated_queue, sub_manager, player, live=False)
@@ -633,8 +682,8 @@ class TestSubtitleWriter:
         player.sub_reload = AsyncMock()
 
         translated_queue: asyncio.Queue = asyncio.Queue()
-        await translated_queue.put((0.0, 4.5, "Primero"))
-        await translated_queue.put((4.5, 5.5, "Segundo"))
+        await translated_queue.put((0.0, 4.5, "Primero", None))
+        await translated_queue.put((4.5, 5.5, "Segundo", None))
         await translated_queue.put(None)
 
         await _subtitle_writer(config, translated_queue, sub_manager, player, live=False)
@@ -655,7 +704,7 @@ class TestSubtitleWriter:
         player.get_time_pos = AsyncMock(return_value=None)
 
         translated_queue: asyncio.Queue = asyncio.Queue()
-        await translated_queue.put((0.0, 4.5, "En vivo"))
+        await translated_queue.put((0.0, 4.5, "En vivo", None))
         await translated_queue.put(None)
 
         await _subtitle_writer(config, translated_queue, sub_manager, player, live=True)
@@ -677,7 +726,7 @@ class TestSubtitleWriter:
         player.get_time_pos = AsyncMock(return_value=3.0)
 
         translated_queue: asyncio.Queue = asyncio.Queue()
-        await translated_queue.put((0, 5.0, "Sincronizado"))
+        await translated_queue.put((0, 5.0, "Sincronizado", None))
         await translated_queue.put(None)
 
         with patch("autosubs.pipeline.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
@@ -702,7 +751,7 @@ class TestSubtitleWriter:
         player.get_time_pos = AsyncMock(return_value=10.0)
 
         translated_queue: asyncio.Queue = asyncio.Queue()
-        await translated_queue.put((0, 5.0, "Ya paso"))
+        await translated_queue.put((0, 5.0, "Ya paso", None))
         await translated_queue.put(None)
 
         with patch("autosubs.pipeline.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
@@ -718,7 +767,7 @@ class TestOverlaySubtitleWriter:
         overlay = MagicMock()
 
         translated_queue: asyncio.Queue = asyncio.Queue()
-        await translated_queue.put((0.0, 5.0, "Subtitulo overlay"))
+        await translated_queue.put((0.0, 5.0, "Subtitulo overlay", None))
         await translated_queue.put(None)
 
         await _overlay_subtitle_writer(config, translated_queue, overlay)
@@ -730,8 +779,8 @@ class TestOverlaySubtitleWriter:
         overlay = MagicMock()
 
         translated_queue: asyncio.Queue = asyncio.Queue()
-        await translated_queue.put((0.0, 4.5, "Primero"))
-        await translated_queue.put((4.5, 5.5, "Segundo"))
+        await translated_queue.put((0.0, 4.5, "Primero", None))
+        await translated_queue.put((4.5, 5.5, "Segundo", None))
         await translated_queue.put(None)
 
         await _overlay_subtitle_writer(config, translated_queue, overlay)
@@ -746,7 +795,7 @@ class TestOverlaySubtitleWriter:
         overlay.update_text.side_effect = RuntimeError("tkinter error")
 
         translated_queue: asyncio.Queue = asyncio.Queue()
-        await translated_queue.put((0.0, 5.0, "texto"))
+        await translated_queue.put((0.0, 5.0, "texto", None))
         await translated_queue.put(None)
 
         # No deberia lanzar excepcion
@@ -774,7 +823,7 @@ class TestTranscribeWorkerParallel:
                 )
 
         item = await text_queue.get()
-        assert item == (0, 4.5, "texto paralelo")
+        assert item == (0, 4.5, "texto paralelo", None)
         sentinel = await text_queue.get()
         assert sentinel is None
 
@@ -801,7 +850,7 @@ class TestTranscribeWorkerParallel:
         while not text_queue.empty():
             items.append(await text_queue.get())
 
-        assert items[0] == (0, 4.2, "texto_0")
+        assert items[0] == (0, 4.2, "texto_0", None)
         assert items[1][0] == pytest.approx(4.2)
         assert items[1][1] == 5.8
         assert items[1][2] == "texto_1"

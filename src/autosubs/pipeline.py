@@ -5,9 +5,11 @@ import collections
 import contextlib
 import json
 import logging
+import os
 import re
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,11 +31,13 @@ from autosubs.stream import (
     set_cookies_browser,
     split_audio,
 )
-from autosubs.subtitles import SubtitleManager, srt_last_end_time
+from autosubs.subtitles import SubtitleManager, layout_turns, srt_last_end_time
 from autosubs.transcribe import (
     TranscriptSegment,
+    supports_turns,
     transcribe_audio,
     transcribe_gemini_chunk,
+    transcribe_turns,
     transcribe_verbose,
 )
 from autosubs.translate import summarize_session, translate_text
@@ -111,26 +115,42 @@ def _is_gemini_asr(whisper_model: str) -> bool:
     return whisper_model.startswith("gemini-")
 
 
-def _create_translate_client(gpt_model: str, openai_api_key: str) -> AsyncOpenAI:
-    """Crea cliente OpenAI-compatible segun el modelo.
+def _create_api_client(model: str, openai_api_key: str) -> AsyncOpenAI:
+    """Crea cliente OpenAI-compatible segun el proveedor del modelo.
 
-    - Modelos con "/" (ej: anthropic/claude-haiku-4.5) â†’ OpenRouter
-    - Resto â†’ OpenAI directo
+    - Modelos con "/" (ej: anthropic/claude-haiku-5.5, microsoft/mai-transcribe-2)
+      → OpenRouter
+    - Resto → OpenAI directo
     """
-    import os
-    if "/" in gpt_model:
-        api_key = os.environ.get("OPENROUTER_API_KEY")
-        if not api_key:
-            raise ValueError(
-                f"OPENROUTER_API_KEY no configurada para modelo '{gpt_model}'. "
-                "Agregala al .env o usa un modelo OpenAI (ej: gpt-4.1)",
-            )
-        return AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
-    return AsyncOpenAI(api_key=openai_api_key)
+    if "/" not in model:
+        return AsyncOpenAI(api_key=openai_api_key)
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError(
+            f"OPENROUTER_API_KEY no configurada para modelo '{model}'. "
+            "Agregala al .env o usa un modelo OpenAI (ej: gpt-4.1)",
+        )
+    return AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+
+
+def _create_translate_client(gpt_model: str, openai_api_key: str) -> AsyncOpenAI:
+    """Cliente para el traductor."""
+    return _create_api_client(gpt_model, openai_api_key)
+
+
+def _create_asr_client(whisper_model: str, openai_api_key: str) -> AsyncOpenAI:
+    """Cliente para la transcripcion.
+
+    Los modelos locales y Gemini no lo usan, pero el fallback a
+    gpt-4o-transcribe si, y ese va siempre por OpenAI.
+    """
+    if whisper_model.startswith("local-") or _is_gemini_asr(whisper_model):
+        return AsyncOpenAI(api_key=openai_api_key)
+    return _create_api_client(whisper_model, openai_api_key)
 
 
 async def _load_local_whisper(model_size: str) -> LocalWhisperModel:
-    """Carga modelo faster-whisper en GPU (blocking â†’ to_thread)."""
+    """Carga modelo faster-whisper en GPU (blocking → to_thread)."""
     from autosubs.local_whisper import LocalWhisperModel
 
     return await asyncio.to_thread(LocalWhisperModel, model_size)
@@ -283,6 +303,7 @@ async def _transcribe_worker(
                 chunk.path.unlink()
             continue
 
+        turns: list[TranscriptSegment] | None = None
         try:
             if local_model is not None:
                 segments = await asyncio.to_thread(
@@ -311,6 +332,11 @@ async def _transcribe_worker(
                         )
                     else:
                         gemini_circuit.record_success()
+            elif supports_turns(config.whisper_model):
+                turns = await transcribe_turns(
+                    client, chunk.path, config.source_lang, config.whisper_model,
+                )
+                text = "\n".join(t.text for t in turns) if turns else None
             else:
                 text = await transcribe_audio(
                     client, chunk.path, config.source_lang, config.whisper_model,
@@ -331,7 +357,7 @@ async def _transcribe_worker(
             repeat_count = 0
             if tracker:
                 tracker.add_whisper(chunk.duration)
-            await text_queue.put((start_time, chunk.duration, text))
+            await text_queue.put((start_time, chunk.duration, text, turns))
 
 
 async def _transcribe_worker_parallel(
@@ -339,26 +365,37 @@ async def _transcribe_worker_parallel(
     config: Config,
     audio_queue: asyncio.Queue,
     text_queue: asyncio.Queue,
-    max_concurrent: int = 3,
+    max_concurrent: int = 6,
     tracker: CostTracker | None = None,
     start_time_offset: float = 0.0,
     max_seconds: float = 0.0,
     local_model: LocalWhisperModel | None = None,
 ) -> None:
-    """Transcribe multiples chunks en paralelo, mantiene orden (para VODs)."""
+    """Transcribe multiples chunks en paralelo, manteniendo el orden.
+
+    max_concurrent tiene que cubrir la latencia del ASR dividida por la
+    duracion del chunk, o el pipeline se atrasa sin techo en tiempo real.
+    Medido con mai-transcribe-2 sobre chunks de 8s: 18.5s de media por chunk
+    (3.7s el mejor, 50.6s el peor), o sea 2.3 chunks en vuelo solo para
+    empatar. 6 deja margen para los picos.
+    """
     semaphore = asyncio.Semaphore(max_concurrent)
-    task_queue: asyncio.Queue[tuple[asyncio.Task[str | None], float] | None] = asyncio.Queue()
+    task_queue: asyncio.Queue = asyncio.Queue()
     gemini_circuit = _GeminiCircuit()
 
-    async def _do_transcribe(audio_path: Path) -> str | None:
+    async def _do_transcribe(
+        audio_path: Path,
+    ) -> tuple[str, list[TranscriptSegment] | None] | None:
+        """Devuelve (texto, turnos). Los turnos son None si el modelo no los da."""
         async with semaphore:
             try:
                 if _is_gemini_asr(config.whisper_model):
                     if gemini_circuit.is_open():
-                        return await transcribe_audio(
+                        text = await transcribe_audio(
                             client, audio_path, config.source_lang,
                             "gpt-4o-transcribe",
                         )
+                        return (text, None) if text else None
                     text = await transcribe_gemini_chunk(
                         audio_path, config.source_lang, config.whisper_model,
                     )
@@ -374,10 +411,18 @@ async def _transcribe_worker_parallel(
                         )
                     else:
                         gemini_circuit.record_success()
-                    return text
-                return await transcribe_audio(
+                    return (text, None) if text else None
+                if supports_turns(config.whisper_model):
+                    turns = await transcribe_turns(
+                        client, audio_path, config.source_lang, config.whisper_model,
+                    )
+                    if not turns:
+                        return None
+                    return "\n".join(t.text for t in turns), turns
+                text = await transcribe_audio(
                     client, audio_path, config.source_lang, config.whisper_model,
                 )
+                return (text, None) if text else None
             except Exception as e:
                 logger.error("Error transcribiendo %s: %s", audio_path.name, e)
                 return None
@@ -410,11 +455,12 @@ async def _transcribe_worker_parallel(
             break
         task, duration = item
         if task is not None:
-            text = await task
-            if text:
+            result = await task
+            if result:
+                text, turns = result
                 if tracker:
                     tracker.add_whisper(duration)
-                await text_queue.put((elapsed, duration, text))
+                await text_queue.put((elapsed, duration, text, turns))
         elapsed += duration
         if max_seconds > 0 and elapsed >= max_seconds:
             mm, _ = divmod(int(max_seconds), 60)
@@ -425,6 +471,43 @@ async def _transcribe_worker_parallel(
     if not limit_reached:
         await receiver
     await text_queue.put(None)
+
+
+def _pick_transcriber(local_model: LocalWhisperModel | None) -> Callable:
+    """Elige worker de transcripcion.
+
+    Serial solo con whisper local: hay una sola GPU y
+    `_transcribe_worker_parallel` ignora `local_model`. Con API siempre
+    paralelo, incluso en vivo: en serie no se llega (20.6s por chunk de 8s
+    medidos) y el atraso en tiempo real no se recupera nunca.
+    """
+    return _transcribe_worker if local_model else _transcribe_worker_parallel
+
+
+def _align_turns(
+    turns: list[TranscriptSegment] | None,
+    translated: str,
+) -> list[TranscriptSegment] | None:
+    """Reparte las lineas traducidas en sus turnos, con sus tiempos.
+
+    Si el traductor no devolvio una linea por turno se descarta el reparto y
+    todo sigue como un bloque: repartir mal los tiempos es peor que no
+    repartirlos. Medido sobre 18 chunks de dos personas, el conteo cuadra en
+    los 18, pero el modelo no obedece siempre y esto es lo que lo contiene.
+    """
+    if not turns:
+        return None
+    lineas = [linea.strip() for linea in translated.splitlines() if linea.strip()]
+    if len(lineas) != len(turns):
+        logger.debug(
+            "Traduccion de %d lineas para %d turnos: va como bloque",
+            len(lineas), len(turns),
+        )
+        return None
+    return [
+        TranscriptSegment(text=linea, start=turno.start, end=turno.end)
+        for turno, linea in zip(turns, lineas, strict=True)
+    ]
 
 
 async def _translate_worker(
@@ -447,11 +530,13 @@ async def _translate_worker(
             await translated_queue.put(None)
             break
 
-        start_time, duration, text = item
+        start_time, duration, text, turns = item
 
-        # Diarizacion: obtener speaker dominante para este segmento
+        # Diarizacion: obtener speaker dominante para este segmento.
+        # Con turnos no se usa: la etiqueta es del chunk entero y en un chunk
+        # con varios turnos seria falsa para casi todos.
         speaker_tag = ""
-        if diarizer is not None:
+        if diarizer is not None and not turns:
             speaker = await asyncio.to_thread(
                 diarizer.get_speaker, start_time, start_time + duration,
             )
@@ -473,6 +558,7 @@ async def _translate_worker(
             translated = await translate_text(
                 client, text, config.source_lang, config.target_lang,
                 config.gpt_model, context=context, tracker=tracker,
+                line_count=len(turns) if turns else 0,
             )
         except Exception as e:
             logger.error("Error inesperado traduciendo: %s", e)
@@ -485,7 +571,9 @@ async def _translate_worker(
                 translated = f"{speaker_tag} {translated}"
             history.append(translated)
             summary_buffer.append(translated)
-            await translated_queue.put((start_time, duration, translated))
+            await translated_queue.put(
+                (start_time, duration, translated, _align_turns(turns, translated)),
+            )
 
             if len(summary_buffer) >= 10:
                 try:
@@ -506,6 +594,7 @@ async def _subtitle_writer(
     live: bool,
     *,
     srt_preloaded: bool = False,
+    srt_end: float = 0.0,
 ) -> None:
     """Lee texto traducido y lo muestra en MPV.
 
@@ -517,17 +606,21 @@ async def _subtitle_writer(
     first_subtitle = not srt_preloaded
     min_display = config.segment_duration * 0.6
     last_shown: float | None = None
+    # Final del ultimo subtitulo escrito: una entrada puede pasarse al chunk
+    # siguiente para que de tiempo de leerla, y el que viene tiene que saberlo.
+    # Al retomar un SRT cacheado arranca donde quedo, no en cero.
+    last_end = srt_end
     loop = asyncio.get_running_loop()
     while True:
         item = await translated_queue.get()
         if item is None:
             break
 
-        start_time, duration, text = item
+        start_time, duration, text, turns = item
         mm, ss = divmod(int(start_time), 60)
 
         try:
-            logger.info("Subtitulo [%02d:%02d]: %s", mm, ss, text)
+            logger.info("Subtitulo [%02d:%02d]: %s", mm, ss, text.replace("\n", " | "))
 
             if live:
                 duration_ms = int(duration * 1000)
@@ -547,8 +640,22 @@ async def _subtitle_writer(
                 await player.show_text(text, duration_ms)
                 last_shown = loop.time()
             else:
-                end_time = start_time + duration
-                sub_manager.add_entry(start_time, end_time, text)
+                if turns:
+                    entradas = layout_turns(
+                        [(t.start, t.end, t.text) for t in turns],
+                        start_time,
+                        last_end,
+                    )
+                else:
+                    # Sin turnos el chunk entero es una entrada, pero pasa por
+                    # el mismo sitio: si no, no respeta el final del anterior
+                    # y se pisan (visto en un SRT real del usuario).
+                    entradas = layout_turns(
+                        [(0.0, duration, text)], start_time, last_end,
+                    )
+                for inicio, fin, linea in entradas:
+                    sub_manager.add_entry(inicio, fin, linea)
+                last_end = entradas[-1][1] if entradas else last_end
 
                 if first_subtitle:
                     await player.sub_add(sub_manager.srt_path)
@@ -570,10 +677,14 @@ async def _overlay_subtitle_writer(
         if item is None:
             break
 
-        start_time, _, text = item
+        start_time, _, text, turns = item
         mm, ss = divmod(int(start_time), 60)
+        # El overlay muestra un texto por vez, no tiene timeline donde repartir
+        # los turnos: van juntos, pero con guion de dialogo si son varios.
+        if turns and len(turns) > 1:
+            text = "\n".join(f"- {t.text}" for t in turns)
         try:
-            logger.info("Subtitulo [%02d:%02d]: %s", mm, ss, text)
+            logger.info("Subtitulo [%02d:%02d]: %s", mm, ss, text.replace("\n", " | "))
             overlay.update_text(text)
         except Exception as e:
             logger.warning("Error mostrando subtitulo en overlay: %s", e)
@@ -643,6 +754,10 @@ async def _run_cached_pipeline(
 async def run_pipeline(config: Config) -> None:
     """Orquesta todo el pipeline de subtitulos."""
     logger.info("Iniciando autosubs...")
+    logger.info(
+        "Modelos: %s (transcripcion) -> %s (traduccion)",
+        config.whisper_model, config.gpt_model,
+    )
     set_cookies_browser(config.cookies_browser)
 
     if config.benchmark_e2e:
@@ -724,7 +839,7 @@ async def _run_batch_vod_pipeline(
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="autosubs_batch_"))
     srt_path = tmp_dir / "autosubs.srt"
-    asr_client = AsyncOpenAI(api_key=config.api_key)
+    asr_client = _create_asr_client(config.whisper_model, config.api_key)
     translate_client = _create_translate_client(config.gpt_model, config.api_key)
     chunk_seconds = 1200  # 20 min
     player: MPVPlayer | None = None
@@ -774,11 +889,12 @@ async def _run_batch_vod_pipeline(
         sub_manager = SubtitleManager(srt_path)
         history: collections.deque[str] = collections.deque(maxlen=5)
         total_translated = 0
+        last_end = 0.0
 
         async def _translate_and_write(
             segments: list[TranscriptSegment],
         ) -> None:
-            nonlocal total_translated
+            nonlocal total_translated, last_end
             for seg in segments:
                 if max_seconds > 0 and seg.start >= max_seconds:
                     break
@@ -803,7 +919,13 @@ async def _run_batch_vod_pipeline(
                             seg.text, translated,
                         )
                     history.append(translated)
-                    sub_manager.add_entry(seg.start, seg.end, translated)
+                    # Los segments vienen con el tiempo hablado: los cortos no
+                    # se alcanzan a leer. Misma regla que el camino por turnos.
+                    [(inicio, fin, linea)] = layout_turns(
+                        [(seg.start, seg.end, translated)], 0.0, last_end,
+                    )
+                    sub_manager.add_entry(inicio, fin, linea)
+                    last_end = fin
                     total_translated += 1
 
         logger.info("Traduciendo chunk 1/%d...", len(chunks))
@@ -968,7 +1090,7 @@ async def _run_mpv_pipeline(
 
     # Cliente OpenAI para transcripcion API (gpt-4o-transcribe etc).
     # Cliente potencialmente OpenRouter para traduccion segun gpt_model.
-    asr_client = AsyncOpenAI(api_key=config.api_key)
+    asr_client = _create_asr_client(config.whisper_model, config.api_key)
     translate_client = _create_translate_client(config.gpt_model, config.api_key)
     player = MPVPlayer(config.ipc_pipe)
     diarizer: DiarizationEngine | None = None
@@ -1002,8 +1124,7 @@ async def _run_mpv_pipeline(
     text_queue: asyncio.Queue = asyncio.Queue(maxsize=5)
     translated_queue: asyncio.Queue = asyncio.Queue(maxsize=5)
 
-    # VODs usan transcripcion paralela, excepto con whisper local (GPU no paralela)
-    transcriber = _transcribe_worker if live or local_model else _transcribe_worker_parallel
+    transcriber = _pick_transcriber(local_model)
 
     try:
         use_local = video_complete and vod_start > 0
@@ -1058,6 +1179,7 @@ async def _run_mpv_pipeline(
                 _subtitle_writer(
                     config, translated_queue, sub_manager, player, live,
                     srt_preloaded=cache_end > 0,
+                    srt_end=cache_end,
                 )
             )
             tg.create_task(_monitor_mpv(player, segmenter))
@@ -1104,7 +1226,7 @@ async def _run_system_audio_pipeline(config: Config) -> None:
     tmp_dir = Path(tempfile.mkdtemp(prefix="autosubs_"))
     audio_dir = tmp_dir / "audio"
 
-    asr_client = AsyncOpenAI(api_key=config.api_key)
+    asr_client = _create_asr_client(config.whisper_model, config.api_key)
     translate_client = _create_translate_client(config.gpt_model, config.api_key)
     tracker = CostTracker(
         whisper_model=config.whisper_model,
@@ -1145,8 +1267,9 @@ async def _run_system_audio_pipeline(config: Config) -> None:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(run_overlay_loop(overlay))
             tg.create_task(capture.poll_chunks(audio_queue))
+            transcriber = _pick_transcriber(local_model)
             tg.create_task(
-                _transcribe_worker(
+                transcriber(
                     asr_client, config, audio_queue, text_queue,
                     tracker=tracker, local_model=local_model,
                 )

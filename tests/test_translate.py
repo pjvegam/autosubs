@@ -139,6 +139,38 @@ class TestTranslateText:
         assert result == "Hola"
 
 
+class TestMetaResponseFilter:
+    """El traductor a veces contesta sobre la traduccion en vez de traducir."""
+
+    async def test_descarta_negativa_del_traductor(self):
+        client = AsyncMock()
+        client.chat.completions.create.return_value = _mock_completion(
+            "I cannot translate this text as it appears to be written in "
+            "Georgian script, not Japanese. Please provide Japanese text."
+        )
+
+        result = await translate_text(client, "テスト", "ja", "es")
+        assert result is None
+
+    async def test_descarta_disculpa_en_espanol(self):
+        client = AsyncMock()
+        client.chat.completions.create.return_value = _mock_completion(
+            "Lo siento, el audio no contiene japones."
+        )
+
+        result = await translate_text(client, "テスト", "ja", "es")
+        assert result is None
+
+    async def test_no_descarta_traduccion_que_empieza_parecido(self):
+        client = AsyncMock()
+        client.chat.completions.create.return_value = _mock_completion(
+            "No puedo creer lo que acabo de ver."
+        )
+
+        result = await translate_text(client, "テスト", "ja", "es")
+        assert result == "No puedo creer lo que acabo de ver."
+
+
 class TestBuildSystemPrompt:
     def test_empty_context_returns_default(self):
         assert _build_system_prompt("") == SYSTEM_PROMPT

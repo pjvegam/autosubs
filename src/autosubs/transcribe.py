@@ -39,21 +39,28 @@ async def transcribe_audio(
     audio_path: Path,
     language: str,
     model: str = "gpt-4o-transcribe",
+    response_format: str = "",
 ) -> str | None:
     """Transcribe un archivo de audio usando la API de Whisper.
 
     Retorna el texto transcrito o None si falla despues de reintentos.
     Filtra transcripciones que parecen alucinaciones.
+
+    Sin response_format explicito se elige por proveedor: OpenRouter (modelos
+    con "/") rechaza "text" y necesita "json".
     """
+    fmt = response_format or ("json" if "/" in model else "text")
+
     async def _call() -> str:
         with open(audio_path, "rb") as f:
             response = await client.audio.transcriptions.create(
                 model=model,
                 file=f,
                 language=language,
-                response_format="text",
+                response_format=fmt,
             )
-        return response.strip()
+        # Con "text" el SDK devuelve un str; con "json", un objeto con .text
+        return response.strip() if isinstance(response, str) else response.text.strip()
 
     text = await with_retries(_call, f"Transcripcion de {audio_path.name}")
     if text:
@@ -119,6 +126,63 @@ class TranscriptSegment:
     text: str
     start: float
     end: float
+
+
+# Modelos que devuelven segments con timestamps en verbose_json. gpt-4o-transcribe
+# y mai-transcribe-1.5 contestan 400 a verbose_json, por eso es lista y no un
+# "todos menos". mai-transcribe-2 ademas corta los segments por turno de habla:
+# medido sobre 6 streams, 0 cortes en 30 chunks de streams solistas y 27 en 10
+# chunks de uno con dos personas.
+_TURN_MODELS = frozenset({"microsoft/mai-transcribe-2", "whisper-1", "openai/whisper-1"})
+
+
+def supports_turns(model: str) -> bool:
+    """Si el modelo devuelve los turnos de habla con sus tiempos."""
+    return model in _TURN_MODELS
+
+
+async def transcribe_turns(
+    client: AsyncOpenAI,
+    audio_path: Path,
+    language: str,
+    model: str,
+) -> list[TranscriptSegment] | None:
+    """Transcribe devolviendo un segmento por turno, con tiempos del chunk.
+
+    Sirve para emitir un subtitulo por turno en vez de un bloque por chunk.
+    Retorna None si el modelo no devuelve segments; el que llama vuelve al
+    camino de texto plano.
+    """
+    async def _call() -> list:
+        with open(audio_path, "rb") as f:
+            response = await client.audio.transcriptions.create(
+                model=model,
+                file=f,
+                language=language,
+                response_format="verbose_json",
+            )
+        return response.segments or []
+
+    raw = await with_retries(_call, f"Transcripcion por turnos de {audio_path.name}")
+    if not raw:
+        return None
+
+    segments: list[TranscriptSegment] = []
+    for seg in raw:
+        if isinstance(seg, dict):
+            text, start, end = seg.get("text", ""), seg.get("start", 0.0), seg.get("end", 0.0)
+        else:
+            text = getattr(seg, "text", "")
+            start = getattr(seg, "start", 0.0)
+            end = getattr(seg, "end", 0.0)
+        text = text.strip()
+        # Hay que filtrar antes de armar el texto que se manda a traducir: si
+        # cae un turno despues, las lineas dejan de corresponderse con los turnos.
+        if _is_hallucination(text):
+            continue
+        segments.append(TranscriptSegment(text=text, start=start, end=end))
+
+    return segments or None
 
 
 async def transcribe_verbose(
