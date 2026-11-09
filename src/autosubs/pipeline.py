@@ -371,6 +371,7 @@ async def _transcribe_worker_parallel(
     start_time_offset: float = 0.0,
     max_seconds: float = 0.0,
     local_model: LocalWhisperModel | None = None,
+    retry_queue: asyncio.Queue | None = None,
 ) -> None:
     """Transcribe multiples chunks en paralelo, manteniendo el orden.
 
@@ -383,6 +384,7 @@ async def _transcribe_worker_parallel(
     semaphore = asyncio.Semaphore(max_concurrent)
     task_queue: asyncio.Queue = asyncio.Queue()
     gemini_circuit = _GeminiCircuit()
+    fallidos: set[Path] = set()
 
     async def _do_transcribe(
         audio_path: Path,
@@ -425,11 +427,18 @@ async def _transcribe_worker_parallel(
                 )
                 return (text, None) if text else None
             except Exception as e:
+                # El .wav NO se borra: es la unica copia del audio de este
+                # trozo, y sin el la unica forma de recuperarlo seria volver a
+                # sacarlo del .mkv a mano con --fill-gaps. Lo recoge el carril
+                # de recuperacion, que lo borra cuando termina con el.
                 logger.error("Error transcribiendo %s: %s", audio_path.name, e)
+                if retry_queue is not None:
+                    fallidos.add(audio_path)
                 return None
             finally:
-                with contextlib.suppress(OSError):
-                    audio_path.unlink()
+                if audio_path not in fallidos:
+                    with contextlib.suppress(OSError):
+                        audio_path.unlink()
 
     async def _receiver() -> None:
         while True:
@@ -441,10 +450,10 @@ async def _transcribe_worker_parallel(
                 with contextlib.suppress(OSError):
                     chunk.path.unlink()
                 # Poner None como task para mantener el tracking de elapsed
-                await task_queue.put((None, chunk.duration))
+                await task_queue.put((None, chunk.duration, None))
                 continue
             task = asyncio.create_task(_do_transcribe(chunk.path))
-            await task_queue.put((task, chunk.duration))
+            await task_queue.put((task, chunk.duration, chunk.path))
 
     receiver = asyncio.create_task(_receiver())
 
@@ -454,7 +463,7 @@ async def _transcribe_worker_parallel(
         item = await task_queue.get()
         if item is None:
             break
-        task, duration = item
+        task, duration, chunk_path = item
         if task is not None:
             result = await task
             if result:
@@ -462,6 +471,10 @@ async def _transcribe_worker_parallel(
                 if tracker:
                     tracker.add_whisper(duration)
                 await text_queue.put((elapsed, duration, text, turns))
+            elif retry_queue is not None and chunk_path in fallidos:
+                # Aqui, y solo aqui, se sabe a que momento del video
+                # correspondia el trozo que se cayo.
+                await retry_queue.put((elapsed, duration, chunk_path))
         elapsed += duration
         if max_seconds > 0 and elapsed >= max_seconds:
             mm, _ = divmod(int(max_seconds), 60)
@@ -472,6 +485,10 @@ async def _transcribe_worker_parallel(
     if not limit_reached:
         await receiver
     await text_queue.put(None)
+    if retry_queue is not None:
+        # Sin este None el carril de recuperacion se queda esperando en la
+        # cola y el TaskGroup no cierra nunca: colgaria el final de cada VOD.
+        await retry_queue.put(None)
 
 
 def _pick_transcriber(local_model: LocalWhisperModel | None) -> Callable:
@@ -509,6 +526,165 @@ def _align_turns(
         TranscriptSegment(text=linea, start=turno.start, end=turno.end)
         for turno, linea in zip(turns, lineas, strict=True)
     ]
+
+
+# Trozos esperando recuperacion. Cada .wav de 8s pesa ~256 KB, asi que 300 son
+# ~75 MB: suficiente para una mala racha larga sin llenarle el disco a nadie si
+# la API se cae del todo.
+_MAX_PENDIENTES = 300
+
+# Lo que se espera entre rondas de recuperacion. Un trozo caido no lo espera
+# nadie, asi que conviene dejar que la causa del fallo se despeje (el 402 de
+# OpenRouter pide 120s) en vez de reintentar en caliente y volver a fallar.
+_RETRY_PAUSA = 90.0
+
+
+async def _recovery_worker(
+    asr_client: AsyncOpenAI,
+    translate_client: AsyncOpenAI,
+    config: Config,
+    retry_queue: asyncio.Queue,
+    sub_manager: SubtitleManager,
+    player: MPVPlayer,
+    stream_context: str = "",
+    tracker: CostTracker | None = None,
+) -> None:
+    """Reintenta en segundo plano los trozos que se cayeron, y los inserta.
+
+    El carril en vivo tiene que rendirse rapido: cada reintento le ocupa un
+    hueco del semaforo y atrasa los subtitulos que vienen. Aqui no hay prisa
+    ninguna, asi que se puede esperar de verdad lo que pide el servidor, que
+    es justo lo que convierte un 402 en un subtitulo que llega tarde en vez de
+    uno que no llega nunca.
+
+    El subtitulo recuperado va a un momento ya pasado del video, asi que entra
+    por `insert_entries` y no por `add_entry`.
+    """
+    pendientes: list[tuple[float, float, Path]] = []
+    cerrando = False
+    try:
+        while True:
+            if not pendientes and not cerrando:
+                item = await retry_queue.get()
+                if item is None:
+                    break
+                pendientes.append(item)
+
+            while True:
+                try:
+                    item = retry_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if item is None:
+                    cerrando = True
+                elif len(pendientes) < _MAX_PENDIENTES:
+                    pendientes.append(item)
+                else:
+                    logger.warning(
+                        "Cola de recuperacion llena (%d), se pierde el trozo "
+                        "de %.0fs", _MAX_PENDIENTES, item[0],
+                    )
+                    with contextlib.suppress(OSError):
+                        item[2].unlink()
+
+            # Al cerrar se intenta una ultima vez de inmediato: esperar la
+            # pausa entera solo para retrasar el cierre del programa no le
+            # sirve a nadie.
+            if not cerrando:
+                await asyncio.sleep(_RETRY_PAUSA)
+
+            quedan: list[tuple[float, float, Path]] = []
+            for start_time, duration, path in pendientes:
+                if not path.exists():
+                    continue
+                entradas = await _recuperar_trozo(
+                    asr_client, translate_client, config, path,
+                    start_time, duration, stream_context, tracker,
+                )
+                if entradas is None:
+                    quedan.append((start_time, duration, path))
+                    continue
+                with contextlib.suppress(OSError):
+                    path.unlink()
+                if entradas:
+                    sub_manager.insert_entries(entradas)
+                    await player.sub_reload(sub_manager.srt_path)
+                    mm, ss = divmod(int(start_time), 60)
+                    logger.info(
+                        "Recuperado [%02d:%02d]: %s",
+                        mm, ss, entradas[0][2].replace("\n", " | "),
+                    )
+            pendientes = quedan
+            if cerrando:
+                break
+    finally:
+        if pendientes:
+            logger.warning(
+                "%d trozos no se pudieron recuperar; quedan como huecos en el "
+                "SRT (se rellenan con --fill-gaps)", len(pendientes),
+            )
+        for _, _, path in pendientes:
+            with contextlib.suppress(OSError):
+                path.unlink()
+
+
+async def _recuperar_trozo(
+    asr_client: AsyncOpenAI,
+    translate_client: AsyncOpenAI,
+    config: Config,
+    path: Path,
+    start_time: float,
+    duration: float,
+    stream_context: str,
+    tracker: CostTracker | None,
+) -> list[tuple[float, float, str]] | None:
+    """Transcribe y traduce un trozo caido.
+
+    Devuelve las entradas listas, `[]` si ahi no habia nada que transcribir, o
+    None si volvio a fallar y hay que reintentarlo mas tarde.
+    """
+    try:
+        if supports_turns(config.whisper_model):
+            turns = await transcribe_turns(
+                asr_client, path, config.source_lang, config.whisper_model,
+            )
+            texto = "\n".join(t.text for t in turns) if turns else ""
+        else:
+            turns = None
+            texto = await transcribe_audio(
+                asr_client, path, config.source_lang, config.whisper_model,
+            ) or ""
+    except Exception as e:
+        logger.debug("Recuperacion de %.0fs fallo otra vez: %s", start_time, e)
+        return None
+
+    if not texto.strip():
+        return []
+
+    if tracker:
+        tracker.add_whisper(duration)
+    try:
+        traducido = await translate_text(
+            translate_client, texto, config.source_lang, config.target_lang,
+            config.gpt_model, context=stream_context, tracker=tracker,
+            line_count=len(turns) if turns else 0,
+        )
+    except Exception as e:
+        logger.debug("Traduccion de %.0fs fallo otra vez: %s", start_time, e)
+        return None
+    if not traducido:
+        return None
+
+    if tracker:
+        tracker.add_entry(start_time, duration, texto, traducido)
+
+    # Hay que repartir la traduccion sobre los tiempos de los turnos, igual
+    # que el camino normal: maquetar con `turns` a secas dejaria el japones.
+    if alineados := _align_turns(turns, traducido):
+        return layout_turns(
+            [(t.start, t.end, t.text) for t in alineados], start_time,
+        )
+    return layout_turns([(0.0, duration, traducido)], start_time)
 
 
 async def _translate_worker(
@@ -1158,6 +1334,10 @@ async def _run_mpv_pipeline(
 
         logger.info("Pipeline MPV en marcha. Subtitulos en: %s", srt_path)
 
+        # En vivo no sirve: el subtitulo se muestra por OSD en el momento, y
+        # uno que llega dos minutos tarde no tiene donde ir.
+        retry_queue: asyncio.Queue | None = None if live else asyncio.Queue()
+
         async with asyncio.TaskGroup() as tg:
             tg.create_task(segmenter.poll_chunks(audio_queue))
             tg.create_task(
@@ -1166,8 +1346,17 @@ async def _run_mpv_pipeline(
                     tracker=tracker, start_time_offset=time_offset,
                     max_seconds=config.stop_at_seconds,
                     local_model=local_model,
+                    retry_queue=retry_queue,
                 )
             )
+            if retry_queue is not None:
+                tg.create_task(
+                    _recovery_worker(
+                        asr_client, translate_client, config, retry_queue,
+                        sub_manager, player,
+                        stream_context=stream_context, tracker=tracker,
+                    )
+                )
             tg.create_task(
                 _translate_worker(
                     translate_client, config, text_queue, translated_queue,

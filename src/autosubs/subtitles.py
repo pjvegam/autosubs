@@ -116,15 +116,39 @@ def srt_last_end_time(srt_path: Path) -> float:
     return last_end
 
 
+def parse_entries(srt_path: Path) -> list[tuple[float, float, str]]:
+    """Lee un SRT a (inicio, fin, texto). Lo que no cuadre se ignora."""
+    entradas: list[tuple[float, float, str]] = []
+    bloques = srt_path.read_text(encoding="utf-8").split("\n\n")
+    for bloque in bloques:
+        lineas = [lin for lin in bloque.splitlines() if lin.strip()]
+        if len(lineas) < 3 or " --> " not in lineas[1]:
+            continue
+        ini, fin = lineas[1].split(" --> ")
+        entradas.append((
+            _parse_timestamp(ini.strip()),
+            _parse_timestamp(fin.strip()),
+            "\n".join(lineas[2:]),
+        ))
+    return entradas
+
+
 class SubtitleManager:
-    """Gestiona un archivo SRT append-only."""
+    """Gestiona un archivo SRT, normalmente append-only.
+
+    Normalmente las entradas llegan en orden y se van agregando al final, que
+    es lo barato. Pero un chunk que fallo y se recupero despues pertenece a un
+    momento ya pasado, y meterlo obliga a reescribir el archivo entero para
+    que los indices sigan siendo consecutivos: de eso se encarga
+    `insert_entries`.
+    """
 
     def __init__(self, srt_path: Path, *, append: bool = False) -> None:
         self.srt_path = srt_path
+        self._entries: list[tuple[float, float, str]] = []
         if append and srt_path.exists():
-            with open(srt_path, encoding="utf-8") as f:
-                count = sum(1 for line in f if " --> " in line)
-            self._index = count + 1
+            self._entries = parse_entries(srt_path)
+            self._index = len(self._entries) + 1
         else:
             self._index = 1
             self.srt_path.write_text("", encoding="utf-8")
@@ -146,3 +170,27 @@ class SubtitleManager:
             text[:50],
         )
         self._index += 1
+        self._entries.append((start, end, text))
+
+    def insert_entries(self, entradas: list[tuple[float, float, str]]) -> None:
+        """Mete entradas en su sitio por tiempo y reescribe el SRT.
+
+        Es para lo que llega tarde: un chunk que fallo en su momento y se
+        recupero despues va a un timestamp ya pasado, asi que no se puede
+        agregar al final sin romper el orden ni la numeracion.
+
+        Escribe a un temporal y reemplaza porque MPV esta leyendo este mismo
+        archivo: si lo pillara a medias se quedaria sin subtitulos.
+        """
+        if not entradas:
+            return
+        self._entries.extend(entradas)
+        self._entries.sort(key=lambda e: e[0])
+        texto = "".join(
+            f"{i}\n{_format_timestamp(ini)} --> {_format_timestamp(fin)}\n{txt}\n\n"
+            for i, (ini, fin, txt) in enumerate(self._entries, 1)
+        )
+        tmp = self.srt_path.with_suffix(".srt.tmp")
+        tmp.write_text(texto, encoding="utf-8")
+        tmp.replace(self.srt_path)
+        self._index = len(self._entries) + 1
