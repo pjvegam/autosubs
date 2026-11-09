@@ -22,6 +22,7 @@ diarize = ["nemo_toolkit[asr]>=2.0", "torch>=2.0", "torchaudio>=2.0"]
 local-whisper = ["faster-whisper>=1.1.0", "nvidia-cublas-cu12>=12.4"]
 gemini = ["google-genai>=1.0"]
 cohere-asr = ["transformers>=4.46", "librosa>=0.10", "accelerate>=0.30"]
+tedx = ["jaconv>=0.4"]
 
 [project.scripts]
 autosubs = "autosubs.main:main"
@@ -37,6 +38,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "jaconv>=0.4",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.15.2",
@@ -67,9 +69,13 @@ ignore = [
     "S603",    # subprocess sin shell=True es seguro
     "S607",    # paths parciales en subprocess (yt-dlp, ffmpeg, mpv son CLI tools)
     "ASYNC110", # polling con sleep es intencional para monitorear procesos externos
-    "ASYNC230", # open() bloqueante en async es aceptable para archivos locales pequeÃ±os
+    "ASYNC230", # open() bloqueante en async es aceptable para archivos locales pequeños
     "ASYNC240", # Path methods bloqueantes en async es aceptable (operaciones triviales)
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S108"]  # assert en tests + /tmp en paths de test son seguros
+"scripts/*" = ["E402"]        # los scripts hacen sys.path.insert antes de importar autosubs
+# Texto japones: los caracteres zenkaku son el dato, no una confusion tipografica
+"src/autosubs/tedx.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_tedx.py" = ["S101", "S108", "RUF001", "RUF002", "RUF003"]

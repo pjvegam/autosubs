@@ -29,10 +29,18 @@ autosubs_logs/
 *.jpg
 *.png
 
+# Dataset TEDxJP-10K reconstruido (~310MB, se regenera con scripts/tedx_build.py)
+tedx_data/
+
+# Chunks e hipotesis del benchmark de gameplay
+gameplay_data/
+
 # Scratch
 test.md
 benchmark_models.md
 benchmark_results.md
+benchmark_tedx.md
+benchmark_gameplay.md
 
 # Claude Code local config (no committeable)
 .claude/settings.local.json
