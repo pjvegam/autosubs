@@ -291,3 +291,47 @@ def test_parse_entries_ida_y_vuelta(tmp_path, texto):
     m = SubtitleManager(tmp_path / "s.srt")
     m.add_entry(1.5, 3.25, texto)
     assert parse_entries(m.srt_path) == [(1.5, 3.25, texto)]
+
+
+class TestSrtSiempreValido:
+    """Una linea en blanco dentro de una entrada rompe el archivo entero.
+
+    En SRT la linea en blanco es el separador de entradas, asi que todo lo que
+    va despues queda huerfano, sin indice ni tiempos. Pasó de verdad: el
+    traductor solto su comentario dentro del subtitulo y dejo 9 entradas
+    partidas en el SRT del usuario.
+    """
+
+    REAL = (
+        "Las matematicas... no, la fisica es mas dificil.\n\n"
+        "Wait, I need to correct myself. The Japanese text means "
+        "\"physics is more...\". Following the rules, the translation is:\n\n"
+        "La fisica es mas"
+    )
+
+    def test_el_texto_con_parrafos_no_parte_el_archivo(self, tmp_path):
+        m = SubtitleManager(tmp_path / "s.srt")
+        m.add_entry(0.0, 2.0, self.REAL)
+        m.add_entry(5.0, 6.0, "siguiente")
+
+        # Contar entradas parseadas no basta: el parser se salta los bloques
+        # huerfanos, asi que el numero sale bien aunque el archivo este roto.
+        # Lo que hay que mirar es que no sobre ningun bloque.
+        texto = m.srt_path.read_text(encoding="utf-8")
+        bloques = [b for b in texto.split("\n\n") if b.strip()]
+        assert len(bloques) == 2, f"{len(bloques)} bloques para 2 entradas"
+        assert len(parse_entries(m.srt_path)) == 2
+
+    def test_tambien_al_insertar(self, tmp_path):
+        m = SubtitleManager(tmp_path / "s.srt")
+        m.add_entry(10.0, 11.0, "despues")
+        m.insert_entries([(0.0, 2.0, self.REAL)])
+        entradas = parse_entries(m.srt_path)
+        assert len(entradas) == 2
+        assert "\n\n" not in entradas[0][2]
+
+    def test_un_subtitulo_de_dos_lineas_sigue_entero(self, tmp_path):
+        """El dialogo con guiones es legitimo y no se puede tocar."""
+        m = SubtitleManager(tmp_path / "s.srt")
+        m.add_entry(0.0, 2.0, "- Hola\n- Adios")
+        assert parse_entries(m.srt_path) == [(0.0, 2.0, "- Hola\n- Adios")]

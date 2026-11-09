@@ -116,6 +116,18 @@ def srt_last_end_time(srt_path: Path) -> float:
     return last_end
 
 
+def _sin_lineas_en_blanco(text: str) -> str:
+    """Quita las lineas en blanco de dentro de un subtitulo.
+
+    En SRT una linea en blanco termina la entrada, asi que un texto que trae
+    una parte el archivo: lo que va despues queda huerfano, sin indice ni
+    tiempos, y deja de ser un SRT valido. Ningun subtitulo necesita parrafos,
+    y esto es lo ultimo antes del disco: pase lo que pase mas arriba, el
+    archivo que sale de aqui se puede volver a leer.
+    """
+    return "\n".join(lin for lin in text.splitlines() if lin.strip())
+
+
 def parse_entries(srt_path: Path) -> list[tuple[float, float, str]]:
     """Lee un SRT a (inicio, fin, texto). Lo que no cuadre se ignora."""
     entradas: list[tuple[float, float, str]] = []
@@ -155,6 +167,7 @@ class SubtitleManager:
 
     def add_entry(self, start: float, end: float, text: str) -> None:
         """Agrega una entrada al archivo SRT."""
+        text = _sin_lineas_en_blanco(text)
         entry = (
             f"{self._index}\n"
             f"{_format_timestamp(start)} --> {_format_timestamp(end)}\n"
@@ -184,7 +197,9 @@ class SubtitleManager:
         """
         if not entradas:
             return
-        self._entries.extend(entradas)
+        self._entries.extend(
+            (ini, fin, _sin_lineas_en_blanco(txt)) for ini, fin, txt in entradas
+        )
         self._entries.sort(key=lambda e: e[0])
         texto = "".join(
             f"{i}\n{_format_timestamp(ini)} --> {_format_timestamp(fin)}\n{txt}\n\n"

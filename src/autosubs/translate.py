@@ -103,6 +103,16 @@ async def translate_text(
     translated = await with_retries(_call, "Traduccion")
     if not translated:
         return None
+    # A veces traduce bien y a continuacion comenta su propia traduccion,
+    # separandolo con una linea en blanco ("Wait, I need to correct myself.
+    # The Japanese text ... means ..."). Eso no es un subtitulo, y ademas
+    # rompe el SRT: la linea en blanco termina la entrada y lo que sigue queda
+    # huerfano. Visto en un SRT real del usuario: 9 entradas asi.
+    # Los turnos van separados por un solo salto, no por una linea en blanco,
+    # asi que cortar aqui no parte una traduccion multilinea legitima.
+    translated = translated.split("\n\n")[0].strip()
+    if not translated:
+        return None
     if _META_RESPONSE.match(translated):
         logger.warning("Descartado meta-respuesta del traductor: %s", translated[:60])
         return None

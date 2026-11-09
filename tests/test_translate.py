@@ -180,3 +180,44 @@ class TestBuildSystemPrompt:
         assert result.startswith(_ROLE)
         assert result.endswith(_RULES)
         assert "Canal: Test" in result
+
+
+class TestComentarioDelTraductor:
+    """Traducir bien y despues comentar la traduccion no es traducir.
+
+    El filtro de meta-respuestas anclaba al principio, asi que solo veia las
+    respuestas que empiezan comentando. Cuando el modelo traduce primero y
+    comenta despues, se colaba entero al subtitulo: 9 veces en un SRT real.
+    """
+
+    async def _traducir(self, respuesta: str):
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(
+            return_value=MagicMock(
+                choices=[MagicMock(message=MagicMock(content=respuesta))],
+                usage=MagicMock(prompt_tokens=1, completion_tokens=1),
+            ),
+        )
+        return await translate_text(client, "原文", "ja", "es", "gpt-4.1")
+
+    async def test_corta_el_comentario_de_despues(self):
+        r = await self._traducir(
+            "La fisica es mas dificil.\n\n"
+            "Wait, I need to correct myself. The Japanese text means...\n\n"
+            "La fisica es mas",
+        )
+        assert r == "La fisica es mas dificil."
+
+    async def test_sigue_descartando_el_comentario_de_delante(self):
+        assert await self._traducir(
+            "I cannot translate this text as it appears to be Georgian.",
+        ) is None
+
+    async def test_una_traduccion_normal_no_se_toca(self):
+        assert await self._traducir("Hola, buenos dias.") == "Hola, buenos dias."
+
+    async def test_los_turnos_multilinea_sobreviven(self):
+        """Los turnos van con un salto simple, no con linea en blanco."""
+        assert await self._traducir("Primera linea\nSegunda linea") == (
+            "Primera linea\nSegunda linea"
+        )
