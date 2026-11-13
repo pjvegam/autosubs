@@ -113,6 +113,23 @@ def _video_download_complete(path: Path) -> bool:
     return not path.with_name(f"{path.name}.ytdl").exists()
 
 
+def _limpiar_sobras_de_descarga() -> None:
+    """Borra el .ytdl y los -FragN de descargas cuyo .mkv ya no esta.
+
+    En el .ytdl yt-dlp anota el fragmento por el que iba. Si el .mkv se borro
+    pero esas sobras quedaron, la siguiente descarga del mismo video arranca
+    con un indice que apunta a un archivo que no existe. Habia sobras de cuatro
+    videos distintos acumuladas en LOGS_DIR.
+    """
+    for resto in [*LOGS_DIR.glob("*.mkv.ytdl"), *LOGS_DIR.glob("*.mkv-Frag*")]:
+        destino = LOGS_DIR / (resto.name.split(".mkv")[0] + ".mkv")
+        if destino.exists():
+            continue
+        with contextlib.suppress(OSError):
+            resto.unlink()
+            logger.debug("Sobra de descarga borrada: %s", resto.name)
+
+
 
 # Circuit breaker para Gemini: si falla N veces consecutivas, lo "sacamos de
 # juego" por X minutos y todas las requests van directo a gpt-4o-transcribe.
@@ -1303,6 +1320,7 @@ async def _run_mpv_pipeline(
     # ademas cortaria la transcripcion al llegar al final de lo descargado.
     cached_video: Path | None = None
     video_complete = False
+    _limpiar_sobras_de_descarga()
     if not live and video_id:
         cached_video = LOGS_DIR / f"{video_id}.mkv"
         if _video_download_complete(cached_video):

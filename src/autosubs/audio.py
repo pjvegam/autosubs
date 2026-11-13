@@ -241,7 +241,13 @@ class AudioSegmenter:
             await asyncio.wait_for(self.process.wait(), timeout=2)
 
         rc = self.process.returncode
-        logger.warning("ffmpeg: alive=%s, returncode=%s", rc is None, rc)
+        # returncode 0 es el final normal: ffmpeg llego al EOF del audio. Como
+        # WARNING aparecia en todos los VOD junto a su "keepalive request
+        # failed", que tambien es ruido de HLS, y escondia los warnings de
+        # verdad. Solo un codigo distinto de 0 (o seguir vivo) es un problema.
+        limpio = rc == 0
+        nivel = logging.DEBUG if limpio else logging.WARNING
+        logger.log(nivel, "ffmpeg: alive=%s, returncode=%s", rc is None, rc)
 
         if self.process.stderr is None:
             return
@@ -251,7 +257,7 @@ class AudioSegmenter:
             return
         if isinstance(data, bytes) and (text := data.decode(errors="replace").strip()):
             for line in text.splitlines()[-5:]:
-                logger.warning("ffmpeg stderr: %s", line)
+                logger.log(nivel, "ffmpeg stderr: %s", line)
 
     async def poll_chunks(self, async_queue: asyncio.Queue) -> None:
         """Lee PCM de stdout de ffmpeg, segmenta con VAD, encola AudioChunks."""

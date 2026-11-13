@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import shutil
 import subprocess
@@ -352,3 +353,39 @@ class TestAudioSegmenter:
     def test_pcm_callback_none_by_default(self, tmp_path):
         seg = AudioSegmenter("https://audio.url", tmp_path, 5)
         assert seg._pcm_callback is None
+
+
+class TestNivelDelEstadoDeFfmpeg:
+    """Un ffmpeg que termina bien no es un WARNING.
+
+    returncode 0 es el EOF normal del audio, y como WARNING salia en todos los
+    VOD arrastrando su "keepalive request failed" (ruido de HLS), lo que tapaba
+    los warnings de verdad.
+    """
+
+    def _segmenter(self, tmp_path, returncode):
+        seg = AudioSegmenter("https://audio.url", tmp_path / "audio", 10)
+        proc = AsyncMock()
+        proc.returncode = returncode
+        proc.wait = AsyncMock(return_value=returncode)
+        proc.stderr = AsyncMock()
+        proc.stderr.read = AsyncMock(
+            return_value=b"[in#0/hls] keepalive request failed",
+        )
+        seg.process = proc
+        return seg
+
+    async def test_salida_limpia_no_deja_warnings(self, tmp_path, caplog):
+        seg = self._segmenter(tmp_path, 0)
+        with caplog.at_level(logging.DEBUG, logger="autosubs.audio"):
+            await seg._log_ffmpeg_status()
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+        assert any("returncode=0" in r.getMessage() for r in caplog.records)
+
+    async def test_salida_con_error_si_avisa(self, tmp_path, caplog):
+        seg = self._segmenter(tmp_path, 1)
+        with caplog.at_level(logging.DEBUG, logger="autosubs.audio"):
+            await seg._log_ffmpeg_status()
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warnings) >= 2
+        assert any("keepalive" in w.getMessage() for w in warnings)

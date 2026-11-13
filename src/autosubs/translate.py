@@ -31,11 +31,18 @@ SYSTEM_PROMPT = _ROLE + _RULES
 # El modelo a veces ignora las reglas y contesta sobre la traduccion en vez de
 # traducir ("I cannot translate this text as it appears to be Georgian..."),
 # tipicamente cuando el ASR alucino en otro idioma. Eso no es un subtitulo.
+# Una disculpa por si sola NO es meta-respuesta: "Lo siento, de verdad no pude
+# levantarme hace 30 minutos" es dialogo real y se estaba descartando (visto en
+# un log del usuario). La disculpa solo cuenta si ademas dice que no puede
+# traducir, que es como contesta el modelo cuando se niega.
 _META_RESPONSE = re.compile(
     r"^(i (cannot|can't|am unable to|was unable to)|"
     r"(this|the) (text|audio|input) (appears|seems|is)|"
     r"(no puedo|no es posible) (traducir|interpretar)|"
-    r"(sorry|unfortunately|lo siento),)",
+    r"(sorry|unfortunately|lo siento),? ?"
+    r"(i (cannot|can't|am unable)|(but )?(this|the) (text|audio|input)|"
+    r"(el|este|ese) (audio|texto) no|"
+    r"no (puedo|es posible) (traducir|interpretar)))",
     re.IGNORECASE,
 )
 

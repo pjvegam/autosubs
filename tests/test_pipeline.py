@@ -9,6 +9,7 @@ from autosubs.costs import CostTracker
 from autosubs.pipeline import (
     _create_asr_client,
     _get_stream_context,
+    _limpiar_sobras_de_descarga,
     _monitor_mpv,
     _monitor_overlay,
     _offset_srt,
@@ -1047,3 +1048,48 @@ class TestOffsetDelSRT:
 
     def test_en_vivo_nunca_retrocede_antes_de_lo_ya_traducido(self):
         assert _offset_srt(live=True, mpv_pos=10.0, translate_from=90.0) == 90.0
+
+
+class TestLimpiarSobrasDeDescarga:
+    """Las sobras de una descarga sin .mkv tienen que irse."""
+
+    def _escribir(self, carpeta: Path, nombres: list[str]) -> None:
+        for n in nombres:
+            (carpeta / n).write_bytes(b"x")
+
+    def test_borra_ytdl_y_frags_huerfanos(self, tmp_path):
+        self._escribir(tmp_path, [
+            "abc.mkv.ytdl", "abc.mkv-Frag1", "abc.mkv-Frag827",
+        ])
+        with patch("autosubs.pipeline.LOGS_DIR", tmp_path):
+            _limpiar_sobras_de_descarga()
+        assert list(tmp_path.iterdir()) == []
+
+    def test_respeta_la_descarga_en_curso(self, tmp_path):
+        self._escribir(tmp_path, [
+            "abc.mkv", "abc.mkv.ytdl", "abc.mkv-Frag1",
+        ])
+        with patch("autosubs.pipeline.LOGS_DIR", tmp_path):
+            _limpiar_sobras_de_descarga()
+        assert (tmp_path / "abc.mkv.ytdl").exists()
+        assert (tmp_path / "abc.mkv-Frag1").exists()
+
+    def test_borra_solo_las_del_video_que_falta(self, tmp_path):
+        self._escribir(tmp_path, [
+            "vivo.mkv", "vivo.mkv.ytdl", "muerto.mkv.ytdl", "muerto.mkv-Frag9",
+        ])
+        with patch("autosubs.pipeline.LOGS_DIR", tmp_path):
+            _limpiar_sobras_de_descarga()
+        assert (tmp_path / "vivo.mkv.ytdl").exists()
+        assert not (tmp_path / "muerto.mkv.ytdl").exists()
+        assert not (tmp_path / "muerto.mkv-Frag9").exists()
+
+    def test_no_toca_otros_archivos(self, tmp_path):
+        self._escribir(tmp_path, ["abc.srt", "abc.title.json", "autosubs.log"])
+        with patch("autosubs.pipeline.LOGS_DIR", tmp_path):
+            _limpiar_sobras_de_descarga()
+        assert len(list(tmp_path.iterdir())) == 3
+
+    def test_carpeta_vacia_no_revienta(self, tmp_path):
+        with patch("autosubs.pipeline.LOGS_DIR", tmp_path):
+            _limpiar_sobras_de_descarga()

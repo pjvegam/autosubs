@@ -170,6 +170,30 @@ class TestMetaResponseFilter:
         result = await translate_text(client, "テスト", "ja", "es")
         assert result == "No puedo creer lo que acabo de ver."
 
+    async def test_no_descarta_disculpa_que_es_dialogo_real(self):
+        """Caso real: se descartaba un subtitulo bueno porque pedia perdon.
+
+        El filtro cortaba cualquier linea que empezara con "Lo siento,", y los
+        streamers se disculpan todo el tiempo. Ahora la disculpa solo cuenta si
+        ademas dice que no puede traducir.
+        """
+        client = AsyncMock()
+        client.chat.completions.create.return_value = _mock_completion(
+            "Lo siento, de verdad no pude levantarme hace 30 minutos."
+        )
+
+        result = await translate_text(client, "テスト", "ja", "es")
+        assert result == "Lo siento, de verdad no pude levantarme hace 30 minutos."
+
+    async def test_no_descarta_sorry_que_es_dialogo_real(self):
+        client = AsyncMock()
+        client.chat.completions.create.return_value = _mock_completion(
+            "Sorry, that was my fault."
+        )
+
+        result = await translate_text(client, "テスト", "ja", "es")
+        assert result == "Sorry, that was my fault."
+
 
 class TestBuildSystemPrompt:
     def test_empty_context_returns_default(self):
