@@ -30,6 +30,7 @@ class MPVPlayer:
         live: bool = False,
         start_time: int = 0,
         end_time: int = 0,
+        pause: bool = False,
     ) -> None:
         """Lanza MPV con la URL del video (y audio separado si es DASH).
 
@@ -37,6 +38,12 @@ class MPVPlayer:
         contra un stream HLS el seek llega antes de que MPV tenga el indice
         cargado y se pierde sin avisar. end_time cierra el rango con --end,
         asi el reproductor se detiene donde terminan los subtitulos.
+
+        `pause` arranca detenido. MPV empieza a reproducir en cuanto se lanza,
+        pero despues todavia hay que conectar el IPC y levantar ffmpeg sobre
+        la misma fuente remota; en un VOD medido eso tardo 2:27 y el video se
+        los comio solo. El que llama lo despausa cuando el pipeline ya esta
+        listo (en vivo no aplica: ahi el borde del directo manda).
         """
         cmd = [
             "mpv",
@@ -44,6 +51,8 @@ class MPVPlayer:
             "--force-window=yes",
             "--sub-visibility=yes",
         ]
+        if pause:
+            cmd.append("--pause=yes")
         if start_time > 0:
             cmd.append(f"--start={start_time}")
         if end_time > 0:
@@ -153,6 +162,10 @@ class MPVPlayer:
     async def show_text(self, text: str, duration_ms: int = 5000) -> None:
         """Muestra texto en pantalla por N milisegundos (OSD overlay)."""
         await self._send_command(["expand-properties", "show-text", text, str(duration_ms)])
+
+    async def resume(self) -> None:
+        """Quita la pausa con la que se lanzo MPV."""
+        await self._send_command(["set", "pause", "no"])
 
     async def sub_add(self, path: Path) -> None:
         """Agrega un archivo de subtitulos."""

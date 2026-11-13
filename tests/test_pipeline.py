@@ -11,6 +11,7 @@ from autosubs.pipeline import (
     _get_stream_context,
     _monitor_mpv,
     _monitor_overlay,
+    _offset_srt,
     _overlay_subtitle_writer,
     _pick_transcriber,
     _subtitle_writer,
@@ -953,3 +954,22 @@ class TestMonitorOverlay:
 
         await _monitor_overlay(overlay, segmenter)
         segmenter.stop.assert_called_once()
+
+
+class TestOffsetDelSRT:
+    """De donde salen los timestamps: de MPV o del pipeline."""
+
+    def test_en_vod_manda_el_pipeline_no_mpv(self):
+        # El caso real: MPV llevaba 147s reproduciendo mientras arrancaba
+        # ffmpeg, y el SRT entero salio corrido 2:27.
+        assert _offset_srt(live=False, mpv_pos=147.0, translate_from=0.0) == 0.0
+
+    def test_en_vod_respeta_desde_donde_se_retoma(self):
+        assert _offset_srt(live=False, mpv_pos=0.0, translate_from=4686.0) == 4686.0
+
+    def test_en_vivo_manda_mpv(self):
+        # ffmpeg entra por el borde del directo, no por el inicio de la ventana.
+        assert _offset_srt(live=True, mpv_pos=147.0, translate_from=0.0) == 147.0
+
+    def test_en_vivo_nunca_retrocede_antes_de_lo_ya_traducido(self):
+        assert _offset_srt(live=True, mpv_pos=10.0, translate_from=90.0) == 90.0

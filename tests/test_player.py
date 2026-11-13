@@ -208,3 +208,34 @@ class TestMPVPlayerClose:
         player = MPVPlayer("pipe")
         result = await player.wait()
         assert result == -1
+
+
+class TestArranqueEnPausa:
+    """MPV reproduce desde que se lanza; el pipeline tarda en estar listo."""
+
+    async def _cmd(self, **kwargs):
+        player = MPVPlayer("pipe")
+        with patch(
+            "autosubs.player.asyncio.to_thread", new_callable=AsyncMock,
+        ) as mock_thread:
+            mock_thread.return_value = MagicMock()
+            await player.start("https://video.url", **kwargs)
+        return mock_thread.call_args[0][1]
+
+    async def test_sin_pausa_no_agrega_la_opcion(self):
+        assert "--pause=yes" not in await self._cmd()
+
+    async def test_con_pausa_arranca_detenido(self):
+        assert "--pause=yes" in await self._cmd(pause=True)
+
+    async def test_la_pausa_convive_con_start_y_end(self):
+        cmd = await self._cmd(pause=True, start_time=90, end_time=120)
+        assert "--pause=yes" in cmd
+        assert "--start=90" in cmd
+        assert "--end=120" in cmd
+
+    async def test_resume_quita_la_pausa(self):
+        player = MPVPlayer("pipe")
+        player._send_command = AsyncMock(return_value={"error": "success"})
+        await player.resume()
+        player._send_command.assert_awaited_once_with(["set", "pause", "no"])

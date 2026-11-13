@@ -52,6 +52,21 @@ logger = logging.getLogger(__name__)
 MIN_SPEECH_RATIO = 0.15
 
 
+def _offset_srt(live: bool, mpv_pos: float, translate_from: float) -> float:
+    """Tiempo absoluto en el que empieza el audio que el pipeline va a leer.
+
+    En vivo manda MPV: ffmpeg entra por el borde del directo, donde este MPV,
+    no por el principio de la ventana del HLS.
+
+    En VOD manda el pipeline: ffmpeg lee desde `translate_from`, asi que ese
+    es el tiempo real de lo que se esta transcribiendo. Seguir a MPV ahi solo
+    corre el SRT hacia adelante, porque MPV lleva reproduciendo desde que se
+    lanzo mientras se conectaba el IPC y arrancaba ffmpeg. En un VOD medido
+    eso dejo el archivo entero desplazado 2:27, no solo el principio.
+    """
+    return max(mpv_pos, translate_from) if live else translate_from
+
+
 def _video_download_complete(path: Path) -> bool:
     """True si el .mkv es una descarga terminada y no una a medias.
 
@@ -1308,11 +1323,13 @@ async def _run_mpv_pipeline(
         if use_local:
             await player.start(
                 str(cached_video), start_time=vod_start, end_time=config.end_time,
+                pause=True,
             )
         else:
             await player.start(
                 video_url, audio_url=mpv_audio_url, live=live,
                 start_time=vod_start, end_time=config.end_time,
+                pause=not live,
             )
         await player.connect()
         if live:
@@ -1324,10 +1341,11 @@ async def _run_mpv_pipeline(
 
         await segmenter.start()
 
-        # Sincronizar timestamps SRT con la posicion del video en MPV.
         mpv_pos = await player.get_time_pos() or 0.0
-        time_offset = max(mpv_pos, translate_from)
-        if time_offset > 1.0 and translate_from == 0:
+        time_offset = _offset_srt(live, mpv_pos, translate_from)
+        if not live:
+            await player.resume()
+        elif time_offset > 1.0 and translate_from == 0:
             logger.info(
                 "Offset A/V detectado: MPV en %.1fs, ajustando SRT", time_offset,
             )
