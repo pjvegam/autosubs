@@ -31,6 +31,7 @@ class MPVPlayer:
         start_time: int = 0,
         end_time: int = 0,
         pause: bool = False,
+        log_file: Path | None = None,
     ) -> None:
         """Lanza MPV con la URL del video (y audio separado si es DASH).
 
@@ -44,6 +45,11 @@ class MPVPlayer:
         la misma fuente remota; en un VOD medido eso tardo 2:27 y el video se
         los comio solo. El que llama lo despausa cuando el pipeline ya esta
         listo (en vivo no aplica: ahi el borde del directo manda).
+
+        `log_file` guarda el log verboso de MPV. Su stdout y stderr van a
+        DEVNULL, asi que sin esto, cuando MPV hace algo raro (abrir el HLS
+        como una lista de 860 fragmentos en vez de como un stream), no queda
+        ni rastro de por que. Ahi se ve que demuxer eligio y con que puntaje.
         """
         cmd = [
             "mpv",
@@ -51,6 +57,8 @@ class MPVPlayer:
             "--force-window=yes",
             "--sub-visibility=yes",
         ]
+        if log_file is not None:
+            cmd.append(f"--log-file={log_file}")
         if pause:
             cmd.append("--pause=yes")
         if start_time > 0:

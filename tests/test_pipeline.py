@@ -956,6 +956,80 @@ class TestMonitorOverlay:
         segmenter.stop.assert_called_once()
 
 
+class TestRutaDelLogDeMPV:
+    """Un log por corrida, y los viejos se van solos."""
+
+    def _en(self, tmp_path, monkeypatch):
+        import autosubs.pipeline as pl
+        monkeypatch.setattr(pl, "MPV_LOG_DIR", tmp_path / "mpv")
+        return pl
+
+    def test_crea_el_directorio_y_devuelve_ruta(self, tmp_path, monkeypatch):
+        pl = self._en(tmp_path, monkeypatch)
+        ruta = pl._mpv_log_path("abc123")
+        assert ruta is not None
+        assert ruta.parent == tmp_path / "mpv"
+        assert ruta.parent.is_dir()
+        assert ruta.name.startswith("abc123_")
+        assert ruta.suffix == ".log"
+
+    def test_dos_corridas_no_se_pisan(self, tmp_path, monkeypatch):
+        import datetime as _dt
+        pl = self._en(tmp_path, monkeypatch)
+        momentos = iter([
+            _dt.datetime(2026, 11, 12, 21, 30, 0),
+            _dt.datetime(2026, 11, 12, 21, 34, 0),
+        ])
+
+        class _Reloj(_dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return next(momentos)
+
+        monkeypatch.setattr(pl, "datetime", _Reloj)
+        assert pl._mpv_log_path("abc") != pl._mpv_log_path("abc")
+
+    def test_sin_video_id_usa_un_nombre_generico(self, tmp_path, monkeypatch):
+        pl = self._en(tmp_path, monkeypatch)
+        assert pl._mpv_log_path("").name.startswith("sin-id_")
+
+    def test_borra_los_de_hace_mas_de_una_semana(self, tmp_path, monkeypatch):
+        import os
+        import time
+        pl = self._en(tmp_path, monkeypatch)
+        (tmp_path / "mpv").mkdir()
+        viejo = tmp_path / "mpv" / "viejo.log"
+        nuevo = tmp_path / "mpv" / "nuevo.log"
+        viejo.write_text("x")
+        nuevo.write_text("x")
+        hace_diez_dias = time.time() - 10 * 86400
+        os.utime(viejo, (hace_diez_dias, hace_diez_dias))
+
+        pl._mpv_log_path("abc")
+
+        assert not viejo.exists()
+        assert nuevo.exists()
+
+    def test_no_toca_lo_que_no_es_log(self, tmp_path, monkeypatch):
+        import os
+        import time
+        pl = self._en(tmp_path, monkeypatch)
+        (tmp_path / "mpv").mkdir()
+        otro = tmp_path / "mpv" / "viejo.srt"
+        otro.write_text("x")
+        hace_diez_dias = time.time() - 10 * 86400
+        os.utime(otro, (hace_diez_dias, hace_diez_dias))
+
+        pl._mpv_log_path("abc")
+
+        assert otro.exists()
+
+    def test_si_no_se_puede_escribir_devuelve_none(self, tmp_path, monkeypatch):
+        pl = self._en(tmp_path, monkeypatch)
+        with patch.object(Path, "mkdir", side_effect=OSError("disco lleno")):
+            assert pl._mpv_log_path("abc") is None
+
+
 class TestOffsetDelSRT:
     """De donde salen los timestamps: de MPV o del pipeline."""
 

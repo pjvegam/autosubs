@@ -9,8 +9,10 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -50,6 +52,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MIN_SPEECH_RATIO = 0.15
+
+# Logs de MPV: uno por corrida, no uno por video. El bug de los fragmentos
+# aparecio en el segundo intento justo despues de cortar el primero, asi que
+# sobrescribir por video borraria la corrida que interesa.
+MPV_LOG_DIR = LOGS_DIR / "mpv"
+MPV_LOG_DIAS = 7
+
+
+def _limpiar_logs_mpv(dias: int = MPV_LOG_DIAS) -> None:
+    """Borra los logs de MPV mas viejos que `dias`."""
+    if not MPV_LOG_DIR.is_dir():
+        return
+    limite = time.time() - dias * 86400
+    for viejo in MPV_LOG_DIR.glob("*.log"):
+        with contextlib.suppress(OSError):
+            if viejo.stat().st_mtime < limite:
+                viejo.unlink()
+
+
+def _mpv_log_path(video_id: str) -> Path | None:
+    """Ruta del log de esta corrida de MPV, o None si no se puede escribir."""
+    try:
+        MPV_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning("No se pudo crear %s, MPV corre sin log: %s", MPV_LOG_DIR, e)
+        return None
+    _limpiar_logs_mpv()
+    sello = datetime.now().strftime("%Y%m%d-%H%M%S")
+    ruta = MPV_LOG_DIR / f"{video_id or 'sin-id'}_{sello}.log"
+    logger.debug("Log de MPV: %s", ruta)
+    return ruta
 
 
 def _offset_srt(live: bool, mpv_pos: float, translate_from: float) -> float:
@@ -922,17 +955,22 @@ async def _run_cached_pipeline(
     cached_video = LOGS_DIR / f"{video_id}.mkv" if video_id else None
 
     player = MPVPlayer(config.ipc_pipe)
+    mpv_log = _mpv_log_path(video_id)
     try:
         if cached_video and _video_download_complete(cached_video):
             logger.info("Video encontrado en cache: %s", cached_video.name)
             # El SRT tiene timestamps absolutos: MPV arranca ya en la posicion
-            await player.start(str(cached_video), start_time=config.start_time)
+            await player.start(
+                str(cached_video), start_time=config.start_time, log_file=mpv_log,
+            )
             await player.connect()
             await player.sub_add(srt_path)
         else:
             logger.info("Video no cacheado, obteniendo URLs del stream...")
             video_url, mpv_audio_url, _ = await get_stream_urls(config.url)
-            await player.start(video_url, audio_url=mpv_audio_url)
+            await player.start(
+                video_url, audio_url=mpv_audio_url, log_file=mpv_log,
+            )
             await player.connect()
             await player.sub_add(srt_path)
 
@@ -1129,13 +1167,14 @@ async def _run_batch_vod_pipeline(
 
         # Abrir MPV con SRT inicial
         player = MPVPlayer(config.ipc_pipe)
+        mpv_log = _mpv_log_path(video_id)
         if config.start_time > 0:
             full_video = str(tmp_dir / "full.mkv")
             cut_file = str(tmp_dir / "video.mkv")
             await download_vod(config.url, full_video)
             await cut_video(full_video, cut_file, config.start_time)
             Path(full_video).unlink(missing_ok=True)
-            await player.start(cut_file)
+            await player.start(cut_file, log_file=mpv_log)
             await player.connect()
             await player.sub_add(srt_path)
             await player.command(
@@ -1143,7 +1182,9 @@ async def _run_batch_vod_pipeline(
             )
         else:
             video_url, mpv_audio_url, _ = await get_stream_urls(config.url)
-            await player.start(video_url, audio_url=mpv_audio_url)
+            await player.start(
+                video_url, audio_url=mpv_audio_url, log_file=mpv_log,
+            )
             await player.connect()
             await player.sub_add(srt_path)
 
@@ -1285,6 +1326,7 @@ async def _run_mpv_pipeline(
     asr_client = _create_asr_client(config.whisper_model, config.api_key)
     translate_client = _create_translate_client(config.gpt_model, config.api_key)
     player = MPVPlayer(config.ipc_pipe)
+    mpv_log = _mpv_log_path(video_id)
     diarizer: DiarizationEngine | None = None
 
     if config.diarize:
@@ -1323,13 +1365,13 @@ async def _run_mpv_pipeline(
         if use_local:
             await player.start(
                 str(cached_video), start_time=vod_start, end_time=config.end_time,
-                pause=True,
+                pause=True, log_file=mpv_log,
             )
         else:
             await player.start(
                 video_url, audio_url=mpv_audio_url, live=live,
                 start_time=vod_start, end_time=config.end_time,
-                pause=not live,
+                pause=not live, log_file=mpv_log,
             )
         await player.connect()
         if live:

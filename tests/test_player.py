@@ -239,3 +239,22 @@ class TestArranqueEnPausa:
         player._send_command = AsyncMock(return_value={"error": "success"})
         await player.resume()
         player._send_command.assert_awaited_once_with(["set", "pause", "no"])
+
+
+class TestLogDeMPV:
+    async def _cmd(self, **kwargs):
+        player = MPVPlayer("pipe")
+        with patch(
+            "autosubs.player.asyncio.to_thread", new_callable=AsyncMock,
+        ) as mock_thread:
+            mock_thread.return_value = MagicMock()
+            await player.start("https://video.url", **kwargs)
+        return mock_thread.call_args[0][1]
+
+    async def test_sin_ruta_no_agrega_log_file(self):
+        assert not any(a.startswith("--log-file=") for a in await self._cmd())
+
+    async def test_con_ruta_pasa_log_file(self, tmp_path):
+        destino = tmp_path / "mpv.log"
+        cmd = await self._cmd(log_file=destino)
+        assert f"--log-file={destino}" in cmd

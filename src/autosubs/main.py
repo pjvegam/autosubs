@@ -1,9 +1,10 @@
 import argparse
 import asyncio
 import logging
+import logging.handlers
 import sys
 
-from autosubs.config import Config
+from autosubs.config import LOGS_DIR, Config
 from autosubs.stream import parse_start_time, parse_time_value
 
 
@@ -119,19 +120,68 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Log rotativo de la sesion. 5 MB por archivo y 3 anteriores: en el peor caso
+# medido (6h de stream en DEBUG) no llega a 20 MB, y el tope evita que crezca
+# sin fin si queda corriendo. Los problemas reales (el SRT corrido, los 402 de
+# OpenRouter) aparecieron horas despues de que la consola ya se habia perdido.
+_LOG_FILE = "autosubs.log"
+_LOG_MAX_BYTES = 5 * 1024 * 1024
+_LOG_BACKUPS = 3
+
+
+class _SoloAutosubsEnDebug(logging.Filter):
+    """Deja pasar todo lo nuestro, y de terceros solo lo que importa.
+
+    Sin esto el archivo en DEBUG se llena de trazas de los SDKs (cada request
+    HTTP, cada reintento interno) y lo propio queda sepultado. Un WARNING de
+    fuera si interesa: ahi es donde aparece un 429 o un 402.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.name.startswith("autosubs") or record.levelno >= logging.WARNING
+
+
 def setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
+    formato = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S",
     )
+
+    consola = logging.StreamHandler()
+    consola.setLevel(level)
+    consola.setFormatter(formato)
+    manejadores: list[logging.Handler] = [consola]
+
+    # El archivo siempre va en DEBUG, aunque la consola este en INFO: es para
+    # leerlo despues de que algo fallo, y para entonces no se puede repetir la
+    # corrida con -v. Si no se puede escribir (disco lleno, permisos) no se
+    # aborta: perder el log es molesto, no corriendo el programa es peor.
+    try:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        archivo = logging.handlers.RotatingFileHandler(
+            LOGS_DIR / _LOG_FILE, maxBytes=_LOG_MAX_BYTES,
+            backupCount=_LOG_BACKUPS, encoding="utf-8",
+        )
+        archivo.setLevel(logging.DEBUG)
+        archivo.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        ))
+        archivo.addFilter(_SoloAutosubsEnDebug())
+        manejadores.append(archivo)
+    except OSError as e:
+        print(f"Aviso: no se pudo abrir el log de sesion: {e}", file=sys.stderr)
+
+    logging.basicConfig(level=logging.DEBUG, handlers=manejadores, force=True)
+
     # Silenciar logs ruidosos de SDKs externos
     logging.getLogger("httpx").setLevel(logging.WARNING)
     # Gemini SDK: spam "AFC is enabled with max remote calls: 10" en cada call
     logging.getLogger("google_genai.models").setLevel(logging.WARNING)
     # OpenAI SDK: retries internos automaticos (nuestro with_retries ya loggea fallos reales)
     logging.getLogger("openai._base_client").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.INFO)
 
 
 async def async_main(config: Config) -> None:
