@@ -22,7 +22,11 @@ PRICING: dict[str, dict[str, float]] = {
     # Via OpenRouter. Precios derivados del campo usage.cost de la propia API
     # sobre un clip de 3s (2026-07-25).
     "microsoft/mai-transcribe-1.5": {"per_minute": 0.006},
-    "microsoft/mai-transcribe-2": {"per_minute": 0.0018},
+    # Precio oficial de lanzamiento: $0.10/hora. OJO, Microsoft lo anuncio como
+    # oferta "limited-time ... until the end of the year" y no dijo a cuanto
+    # sube en enero 2027. Antes estaba anotado a 0.0018 extrapolando un clip de
+    # 3s, un 8% de mas.
+    "microsoft/mai-transcribe-2": {"per_minute": 0.00167},
     "elevenlabs/scribe-v2": {"per_minute": 0.0018},
     "qwen/qwen3-asr-flash-2026-02-10": {"per_minute": 0.0019},
     "qwen/qwen3-asr-1.7b": {"per_minute": 0.0005},
@@ -35,6 +39,15 @@ PRICING: dict[str, dict[str, float]] = {
     "openai/whisper-large-v3-turbo": {"per_minute": 0.0002},
     "deepgram/nova-3": {"per_minute": 0.00364},
     "mistralai/voxtral-mini-transcribe": {"per_minute": 0.002},
+    # Publicados despues del benchmark de octubre. Estos no estan medidos: el
+    # precio sale del campo pricing.prompt de OpenRouter ($/segundo de audio)
+    # multiplicado por 60, que cuadra con los que si medimos.
+    "x-ai/grok-stt-2.0": {"per_minute": 0.00167},
+    "moondream/parakeet-ultra": {"per_minute": 0.001},
+    "nvidia/nemotron-3.5-transcribe": {"per_minute": 0.001},
+    "mistralai/voxtral-mini-transcribe-3-0": {"per_minute": 0.0035},
+    "mistralai/voxtral-small-transcribe-3-0": {"per_minute": 0.004},
+    "assemblyai/universal-3-6-pro": {"per_minute": 0.005},
     "openai/whisper-1": {"per_minute": 0.006},
     "gpt-4o-transcribe-diarize": {"per_minute": 0.006},
     # Gemini audio: $1/M tokens, ~1500 tokens/min => $0.0015/min
